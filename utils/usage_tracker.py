@@ -66,26 +66,34 @@ GOOGLE_SEARCH_COST          = 0.032
 GOOGLE_DETAIL_COST          = 0.017
 ADZUNA_DAILY_LIMIT          = 250
 
-def _load_secret(key: str) -> str:
-    val = os.getenv(key, "")
-    if val:
-        return val
-    try:
-        import streamlit as st
-        return st.secrets.get(key, "")
-    except Exception:
-        return ""
+_SUPABASE_URL: str = ""
+_SUPABASE_KEY: str = ""
+_creds_loaded: bool = False
 
-# Captured at import time so background threads can use the values without st.secrets
-_SUPABASE_URL = _load_secret("SUPABASE_URL")
-_SUPABASE_KEY = _load_secret("SUPABASE_KEY")
+
+def _ensure_creds() -> None:
+    global _SUPABASE_URL, _SUPABASE_KEY, _creds_loaded
+    if _creds_loaded:
+        return
+    _SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+    _SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+    if not (_SUPABASE_URL and _SUPABASE_KEY):
+        try:
+            import streamlit as st
+            _SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
+            _SUPABASE_KEY = st.secrets.get("SUPABASE_KEY", "")
+        except Exception:
+            pass
+    _creds_loaded = True
 
 
 def _supabase_ok() -> bool:
+    _ensure_creds()
     return bool(_SUPABASE_URL and _SUPABASE_KEY)
 
 
 def _headers(prefer: str = "return=minimal") -> dict:
+    _ensure_creds()
     h = {
         "apikey": _SUPABASE_KEY,
         "Authorization": f"Bearer {_SUPABASE_KEY}",
