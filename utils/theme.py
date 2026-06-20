@@ -282,7 +282,9 @@ div[data-testid="stSelectSlider"] [role="slider"] {{
     font-weight: 600 !important; text-transform: uppercase !important;
     letter-spacing: 0.06em !important;
 }}
-[data-testid="stMetricValue"] > div {{
+[data-testid="stMetricValue"] > div,
+[data-testid="stMetricValue"] p {{
+    font-family: 'Inter', sans-serif !important;
     color: {text} !important; font-size: 20px !important;
     font-weight: 700 !important; letter-spacing: -0.03em !important;
 }}
