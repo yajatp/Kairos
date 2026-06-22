@@ -195,6 +195,7 @@ def get_run_history(limit: int = 20) -> list[dict]:
                 # Normalise field names to match local format
                 return [
                     {
+                        "id":                  r.get("id"),
                         "timestamp":           r.get("timestamp", ""),
                         "location":            r.get("location", ""),
                         "geocode_calls":       r.get("geocode_calls", 0),
@@ -236,6 +237,7 @@ def record_run(
     clinics_found: int,
     leads_found: int,
     stopped_early: bool = False,
+    radius_miles: int | None = None,
 ) -> None:
     payload = {
         "timestamp":          datetime.utcnow().isoformat() + "Z",
@@ -249,6 +251,8 @@ def record_run(
         "leads_found":        leads_found,
         "stopped_early":      stopped_early,
     }
+    if radius_miles is not None:
+        payload["radius_miles"] = radius_miles
 
     if _supabase_ok():
         try:
@@ -259,7 +263,19 @@ def record_run(
                 timeout=8,
             )
             if not resp.ok:
-                logger.warning(f"Supabase insert failed: {resp.status_code} {resp.text}")
+                # If radius_miles column doesn't exist yet, retry without it
+                if radius_miles is not None and resp.status_code in (400, 422):
+                    payload_no_radius = {k: v for k, v in payload.items() if k != "radius_miles"}
+                    resp2 = requests.post(
+                        f"{_SUPABASE_URL}/rest/v1/runs",
+                        headers=_headers(),
+                        json=payload_no_radius,
+                        timeout=8,
+                    )
+                    if not resp2.ok:
+                        logger.warning(f"Supabase insert failed: {resp2.status_code} {resp2.text}")
+                else:
+                    logger.warning(f"Supabase insert failed: {resp.status_code} {resp.text}")
             return
         except Exception as e:
             logger.warning(f"Supabase record_run failed: {e} — falling back to local")
@@ -274,6 +290,31 @@ def record_run(
     m["outscraper"]["reviews_used"] += outscraper_reviews
     state["runs"].append(payload)
     _local_save(state)
+
+
+def get_exact_run(location: str, radius_miles: int) -> dict | None:
+    """Return the most recent run matching this exact location + radius, or None."""
+    if not _supabase_ok():
+        return None
+    try:
+        resp = requests.get(
+            f"{_SUPABASE_URL}/rest/v1/runs",
+            headers=_headers(prefer=""),
+            params={
+                "location": f"ilike.{location}",
+                "radius_miles": f"eq.{radius_miles}",
+                "order": "timestamp.desc",
+                "limit": 1,
+            },
+            timeout=8,
+        )
+        if resp.ok:
+            rows = resp.json()
+            if rows:
+                return rows[0]
+    except Exception as e:
+        logger.warning(f"get_exact_run failed: {e}")
+    return None
 
 
 def record_usage(reviews_pulled: int) -> None:
@@ -364,3 +405,51 @@ def get_leads(location: str | None = None, limit: int = 200) -> list[dict]:
     except Exception as e:
         logger.warning(f"get_leads failed: {e}")
         return []
+
+
+def get_known_place_ids() -> set[str]:
+    """Return all place_ids already stored in the leads table. Empty set if Supabase not configured."""
+    if not _supabase_ok():
+        return set()
+    try:
+        resp = requests.get(
+            f"{_SUPABASE_URL}/rest/v1/leads",
+            headers=_headers(prefer=""),
+            params={"select": "place_id", "limit": 10000},
+            timeout=10,
+        )
+        if resp.ok:
+            return {row["place_id"] for row in resp.json() if row.get("place_id")}
+    except Exception as e:
+        logger.warning(f"get_known_place_ids failed: {e}")
+    return set()
+
+
+def get_lead_run_info(place_id: str) -> dict | None:
+    """Return {run_location, scored_at, run_id} for the most recent lead with this place_id, or None."""
+    if not _supabase_ok():
+        return None
+    try:
+        resp = requests.get(
+            f"{_SUPABASE_URL}/rest/v1/leads",
+            headers=_headers(prefer=""),
+            params={
+                "place_id": f"eq.{place_id}",
+                "select": "id,run_location,scored_at",
+                "order": "scored_at.desc",
+                "limit": 1,
+            },
+            timeout=8,
+        )
+        if resp.ok:
+            rows = resp.json()
+            if rows:
+                row = rows[0]
+                return {
+                    "run_id":       row.get("id"),
+                    "run_location": row.get("run_location", ""),
+                    "scored_at":    row.get("scored_at", ""),
+                }
+    except Exception as e:
+        logger.warning(f"get_lead_run_info failed: {e}")
+    return None
