@@ -45,6 +45,9 @@ from utils.usage_tracker import (
     record_run,
     save_lead,
     OUTSCRAPER_MONTHLY_LIMIT,
+    get_exact_run,
+    get_known_place_ids,
+    get_lead_run_info,
 )
 
 # ── Review drill-down helpers ───────────────────────────────────────────────────
@@ -121,19 +124,21 @@ if "_pipeline" not in st.session_state:
         "leads_df": None,
         "error": None,
         "search_location": None,
+        "skipped_clinics": [],
     }
 
 _p = st.session_state["_pipeline"]
 
 
 def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -> None:
-    p["running"]        = True
-    p["stop_requested"] = False
-    p["progress"]       = 0
-    p["messages"]       = []
-    p["leads_df"]       = None
-    p["error"]          = None
+    p["running"]         = True
+    p["stop_requested"]  = False
+    p["progress"]        = 0
+    p["messages"]        = []
+    p["leads_df"]        = None
+    p["error"]           = None
     p["search_location"] = location
+    p["skipped_clinics"] = []
 
     _calls = {"geocode": 0, "search": 0, "detail": 0, "adzuna": 0, "outscraper_reviews": 0}
     leads  = []
@@ -173,14 +178,37 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
         p["progress"] = 30
 
         borderline_queue = []
-        total = len(raw_clinics)
 
-        for i, clinic in enumerate(raw_clinics):
+        # B2 — partition clinics into new vs already-known
+        known_place_ids = get_known_place_ids()
+        new_clinics     = [c for c in raw_clinics if c["place_id"] not in known_place_ids]
+        skipped_clinics_raw = [c for c in raw_clinics if c["place_id"] in known_place_ids]
+
+        skipped_clinics: list[dict] = []
+        for sc in skipped_clinics_raw:
+            info = get_lead_run_info(sc["place_id"])
+            skipped_clinics.append({
+                "name":           sc.get("name", sc["place_id"]),
+                "place_id":       sc["place_id"],
+                "address":        sc.get("vicinity", ""),
+                "prior_location": info["run_location"] if info else "",
+                "prior_date":     info["scored_at"]    if info else "",
+                "run_id":         info["run_id"]        if info else None,
+            })
+
+        if skipped_clinics:
+            log(f"Skipping {len(skipped_clinics)} clinics already in database.")
+
+        p["skipped_clinics"] = skipped_clinics
+
+        total = len(new_clinics)
+
+        for i, clinic in enumerate(new_clinics):
             if p["stop_requested"]:
                 log(f"Stopped after {i} of {total} clinics.")
                 break
 
-            p["progress"] = 30 + int((i / total) * 40)
+            p["progress"] = 30 + int((i / total) * 40) if total else 70
             log(f"Fetching clinic details... ({i + 1}/{total})")
 
             details     = get_clinic_details(clinic["place_id"], GOOGLE_PLACES_API_KEY)
@@ -382,6 +410,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 clinics_found=len(leads),
                 leads_found=len(p["leads_df"]) if p.get("leads_df") is not None else 0,
                 stopped_early=p.get("stop_requested", False),
+                radius_miles=radius_miles,
             )
         except Exception:
             pass
@@ -515,6 +544,33 @@ if find_leads:
     if not GOOGLE_PLACES_API_KEY:
         st.error("Google Places API key not configured.")
         st.stop()
+
+    # B1 — exact query deduplication check
+    prior_run = get_exact_run(location.strip(), radius_miles)
+    if prior_run and not st.session_state.get("_overlap_run_anyway"):
+        from datetime import datetime as _dt
+        try:
+            prior_ts = _dt.fromisoformat(prior_run["timestamp"].replace("Z", "+00:00"))
+            prior_date_str = prior_ts.strftime("%b %d, %Y")
+        except Exception:
+            prior_date_str = prior_run.get("timestamp", "")
+        st.warning(
+            f"You already searched **{location.strip()}** at a **{radius_miles}mi radius** "
+            f"on {prior_date_str}. Viewing the same results again?"
+        )
+        col_hist, col_run = st.columns(2)
+        with col_hist:
+            if st.button("Go to History", use_container_width=True):
+                st.switch_page("pages/history.py")
+        with col_run:
+            if st.button("Run Anyway", use_container_width=True, type="primary"):
+                st.session_state["_overlap_run_anyway"] = True
+                st.rerun()
+        st.stop()
+
+    # Clear the "run anyway" flag so it doesn't persist to future searches
+    st.session_state.pop("_overlap_run_anyway", None)
+
     threading.Thread(
         target=_run_pipeline,
         args=(_p, location, radius_miles, max_results),
@@ -562,6 +618,37 @@ if leads_df is not None and not _p["running"]:
     if df.empty:
         st.warning("No leads matched the current filters.")
     else:
+        # ── B2 Overlap summary ───────────────────────
+        skipped = _p.get("skipped_clinics", [])
+        if skipped:
+            from datetime import datetime as _dt
+            with st.container():
+                st.info(
+                    f"↩ {len(skipped)} clinic{'s' if len(skipped) != 1 else ''} "
+                    f"{'were' if len(skipped) != 1 else 'was'} already in your database "
+                    f"and skipped (saved ~{len(skipped)} API call{'s' if len(skipped) != 1 else ''})"
+                )
+                for sc in skipped:
+                    prior_loc  = sc.get("prior_location", "")
+                    prior_date = sc.get("prior_date", "")
+                    run_id     = sc.get("run_id")
+                    try:
+                        prior_date_str = _dt.fromisoformat(
+                            prior_date.replace("Z", "+00:00")
+                        ).strftime("%b %d") if prior_date else ""
+                    except Exception:
+                        prior_date_str = prior_date
+
+                    meta = " · ".join(filter(None, [prior_loc, prior_date_str]))
+                    sc_col1, sc_col2 = st.columns([3, 1])
+                    with sc_col1:
+                        st.caption(f"**{sc['name']}**" + (f"  ·  {meta}" if meta else ""))
+                    with sc_col2:
+                        if run_id is not None:
+                            if st.button("View in History", key=f"skip_{sc['place_id']}", use_container_width=True):
+                                st.session_state["history_target_run"] = run_id
+                                st.switch_page("pages/history.py")
+
         # ── Stat blocks ─────────────────────────────
         high_ct   = len(df[df["Pain Score"] >= 6])
         strong_ct = len(df[(df["Pain Score"] >= 4) & (df["Pain Score"] < 6)])

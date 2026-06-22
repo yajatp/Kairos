@@ -91,6 +91,9 @@ c4.metric("Est. Cumulative Cost",  f"${total_cost:.2f}")
 st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 st.markdown("---")
 
+# ── B3 — Deep-link target run ────────────────────────────────────────────────────
+_target_run_id = st.session_state.pop("history_target_run", None)
+
 # ── Tabs ─────────────────────────────────────────────────────────────────────────
 tab_chrono, tab_geo = st.tabs(["Chronological", "By Location"])
 
@@ -103,13 +106,15 @@ with tab_chrono:
         g_cost  = estimated_google_cost(
             r.get("geocode_calls", 0), r.get("search_calls", 0), r.get("detail_calls", 0)
         )
-        stopped = r.get("stopped_early", False)
-        ts_fmt  = _fmt_ts(ts)
-        warn    = "⚠️ " if stopped else ""
+        stopped  = r.get("stopped_early", False)
+        ts_fmt   = _fmt_ts(ts)
+        warn     = "⚠️ " if stopped else ""
+        run_id   = r.get("id")
+        expanded = (_target_run_id is not None and run_id == _target_run_id)
 
         label = f"{warn}{r.get('location', 'Unknown')} — {r.get('leads_found', 0)} leads · {ts_fmt}"
 
-        with st.expander(label, expanded=False):
+        with st.expander(label, expanded=expanded):
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.markdown("**Results**")
