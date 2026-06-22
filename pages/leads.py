@@ -1,3 +1,5 @@
+import html
+import json
 import math
 import os
 import threading
@@ -25,7 +27,7 @@ OUTSCRAPER_API_KEY    = _get_secret("OUTSCRAPER_API_KEY")
 
 from pipeline.places import geocode, search_clinics, get_clinic_details
 from pipeline.jobs import fetch_adzuna_jobs, match_clinic_to_job
-from pipeline.reviews import scan_reviews
+from pipeline.reviews import scan_reviews, SIGNAL_LABELS
 from pipeline.outscraper_reviews import fetch_deep_reviews
 from pipeline.classifier import classify_clinic
 from pipeline.scorer import (
@@ -44,6 +46,34 @@ from utils.usage_tracker import (
     save_lead,
     OUTSCRAPER_MONTHLY_LIMIT,
 )
+
+# ── Review drill-down helpers ───────────────────────────────────────────────────
+
+def apply_highlights(text: str, highlights: list, category: str) -> str:
+    """Wrap keyword spans for the given category in <mark> tags.
+
+    Other-category highlights are ignored so each expander only marks its own
+    signals. Overlapping spans are skipped (first match wins).
+    """
+    spans = sorted(
+        [h for h in highlights if h["category"] == category],
+        key=lambda h: h["start"],
+    )
+    out_parts = []
+    cursor = 0
+    for span in spans:
+        s, e = span["start"], span["end"]
+        if s < cursor:
+            continue  # skip overlapping
+        out_parts.append(html.escape(text[cursor:s]))
+        out_parts.append(
+            f'<mark style="background:#fef08a;padding:1px 3px;border-radius:3px">'
+            f'{html.escape(text[s:e])}</mark>'
+        )
+        cursor = e
+    out_parts.append(html.escape(text[cursor:]))
+    return "".join(out_parts)
+
 
 # ── Color constants ─────────────────────────────────────────────────────────────
 _TEXT2  = "#6b6f76"
@@ -284,6 +314,9 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 else "Places sample (5 max)"
             )
 
+            matched_reviews = review_data.get("matched_reviews", [])
+            reviews_json = json.dumps(matched_reviews) if matched_reviews else None
+
             final_leads.append({
                 "Clinic Name":         details.get("name", ""),
                 "Classification":      classification,
@@ -308,6 +341,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 "Extended Hours":      "Yes" if clinic_data.get("extended_hours") else "No",
                 "Online Booking":      "Yes" if clinic_data.get("has_online_booking") else "No",
                 "Review Data Depth":   review_depth_label,
+                "reviews_json":        reviews_json,
             })
 
             save_lead(
@@ -327,6 +361,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 extended_hours=bool(clinic_data.get("extended_hours")),
                 online_booking=bool(clinic_data.get("has_online_booking")),
                 review_depth=review_depth_label,
+                reviews_json=reviews_json,
             )
 
         p["leads_df"] = pd.DataFrame(final_leads)
@@ -737,6 +772,43 @@ if leads_df is not None and not _p["running"]:
                             for part in evidence.split(" | ")[:2]:
                                 if part.strip():
                                     st.caption(part.strip())
+
+                        # ── Review drill-down ────────────────────────────
+                        raw_rj = row.get("reviews_json")
+                        if raw_rj:
+                            try:
+                                all_matched = json.loads(raw_rj)
+                            except (ValueError, TypeError):
+                                all_matched = []
+
+                            # Group reviews by category
+                            cat_reviews: dict[str, list] = {}
+                            for rev in all_matched:
+                                for cat in rev.get("matched_categories", []):
+                                    cat_reviews.setdefault(cat, []).append(rev)
+
+                            if cat_reviews:
+                                st.markdown("")
+                                st.markdown("**Review Drill-Down**")
+                                for cat, cat_revs in cat_reviews.items():
+                                    label = SIGNAL_LABELS.get(cat, cat.replace("_", " ").title())
+                                    with st.expander(f"🔍 {label}  ({len(cat_revs)} reviews)", expanded=False):
+                                        st.markdown(
+                                            f"**Summary:** Found {len(cat_revs)} review(s) "
+                                            f"mentioning {label} issues."
+                                        )
+                                        st.divider()
+                                        for rev in cat_revs:
+                                            rating_val = rev.get("rating", 0)
+                                            stars = "★" * rating_val + "☆" * (5 - rating_val)
+                                            st.markdown(f"**{stars}**")
+                                            highlighted = apply_highlights(
+                                                rev.get("text", ""),
+                                                rev.get("highlights", []),
+                                                cat,
+                                            )
+                                            st.markdown(highlighted, unsafe_allow_html=True)
+                                            st.divider()
 
 # ── Empty state ──────────────────────────────────────────────────────────────────
 elif leads_df is None and not _p["running"] and not _p["error"]:

@@ -310,6 +310,7 @@ def save_lead(
     extended_hours: bool,
     online_booking: bool,
     review_depth: str,
+    reviews_json: str = None,  # -- Run: ALTER TABLE leads ADD COLUMN IF NOT EXISTS reviews_json TEXT;
 ) -> None:
     """Upsert a scored lead by place_id. Silent no-op when Supabase is not configured."""
     if not _supabase_ok():
@@ -332,6 +333,7 @@ def save_lead(
         "online_booking": online_booking,
         "review_depth":   review_depth,
         "scored_at":      datetime.utcnow().isoformat() + "Z",
+        "reviews_json":   reviews_json,
     }
     try:
         resp = requests.post(

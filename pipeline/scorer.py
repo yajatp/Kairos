@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pipeline.reviews import SIGNAL_LABELS
+
 
 def detect_extended_hours(opening_hours: dict | None) -> bool:
     if not opening_hours:
@@ -39,9 +41,12 @@ def calculate_pain_score(clinic_data: dict) -> tuple[int, list[str]]:
 
     if clinic_data.get("pain_review_count", 0) >= 1:
         score += 2
-        cats = ", ".join(clinic_data.get("pain_categories", []))
+        cats_display = ", ".join(
+            SIGNAL_LABELS.get(c, c.replace("_", " ").title())
+            for c in clinic_data.get("pain_categories", [])
+        )
         source_note = " [deep scan]" if clinic_data.get("review_source") == "outscraper_deep" else ""
-        signals.append(f"Reviews: admin complaints ({cats}){source_note}")
+        signals.append(f"Reviews: admin complaints ({cats_display}){source_note}")
 
     num_locs = clinic_data.get("num_locations", 1)
     if num_locs > 1:
