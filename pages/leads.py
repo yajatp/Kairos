@@ -4,8 +4,11 @@ import threading
 import time
 from datetime import datetime
 
+import folium
 import pandas as pd
+import requests
 import streamlit as st
+from streamlit_folium import st_folium
 
 
 def _get_secret(key: str) -> str:
@@ -353,14 +356,70 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
         p["running"] = False
 
 
+# ── Cached geocode for map preview (separate from pipeline geocode) ─────────────
+@st.cache_data(show_spinner=False)
+def _geocode_for_map(location_str: str, api_key: str):
+    """Return (lat, lng, city_label) or None if geocoding fails."""
+    try:
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={"address": location_str, "key": api_key},
+            timeout=8,
+        )
+        data = resp.json()
+        if data.get("status") != "OK" or not data.get("results"):
+            return None
+        loc = data["results"][0]["geometry"]["location"]
+        # Build a short city label from address components
+        components = data["results"][0].get("address_components", [])
+        city, state = "", ""
+        for comp in components:
+            if "locality" in comp["types"]:
+                city = comp["short_name"]
+            if "administrative_area_level_1" in comp["types"]:
+                state = comp["short_name"]
+        label = f"{city}, {state}" if city and state else location_str
+        return loc["lat"], loc["lng"], label
+    except Exception:
+        return None
+
+
+def _reverse_geocode(lat: float, lng: float, api_key: str):
+    """Return 'City, ST' string from lat/lng, or None on failure."""
+    try:
+        resp = requests.get(
+            "https://maps.googleapis.com/maps/api/geocode/json",
+            params={"latlng": f"{lat},{lng}", "key": api_key},
+            timeout=8,
+        )
+        data = resp.json()
+        if data.get("status") != "OK" or not data.get("results"):
+            return None
+        components = data["results"][0].get("address_components", [])
+        city, state = "", ""
+        for comp in components:
+            if "locality" in comp["types"]:
+                city = comp["short_name"]
+            if "administrative_area_level_1" in comp["types"]:
+                state = comp["short_name"]
+        if city and state:
+            return f"{city}, {state}"
+        return None
+    except Exception:
+        return None
+
+
 # ── Sidebar controls ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("Location")
+    if "location_input" not in st.session_state:
+        st.session_state["location_input"] = ""
     location = st.text_input(
         "Location",
         placeholder="City, State or ZIP",
         label_visibility="collapsed",
         disabled=_p["running"],
+        key="location_input",
     )
 
     st.markdown("Search Radius")
@@ -372,6 +431,60 @@ with st.sidebar:
         disabled=_p["running"],
         format_func=lambda x: f"{x} mi",
     )
+
+    # ── Mini map preview ────────────────────────────────────────────────────────
+    _map_center_lat, _map_center_lng, _map_zoom = 39.5, -98.35, 3
+    _map_marker = None
+
+    if location and len(location) >= 3 and GOOGLE_PLACES_API_KEY:
+        _geo = _geocode_for_map(location, GOOGLE_PLACES_API_KEY)
+        if _geo:
+            _map_center_lat, _map_center_lng, _city_label = _geo
+            _map_zoom = 10
+            _map_marker = (_map_center_lat, _map_center_lng, _city_label)
+
+    _m = folium.Map(
+        location=[_map_center_lat, _map_center_lng],
+        zoom_start=_map_zoom,
+        tiles="OpenStreetMap",
+        zoom_control=False,
+        scrollWheelZoom=False,
+        attributionControl=False,
+    )
+
+    if _map_marker:
+        folium.Marker(
+            location=[_map_marker[0], _map_marker[1]],
+            popup=_map_marker[2],
+            icon=folium.Icon(color="purple", icon="circle", prefix="fa"),
+        ).add_to(_m)
+        folium.Circle(
+            location=[_map_marker[0], _map_marker[1]],
+            radius=radius_miles * 1609.34,
+            color="#6366f1",
+            fill=True,
+            fill_color="#6366f1",
+            fill_opacity=0.1,
+            weight=1.5,
+        ).add_to(_m)
+
+    _map_data = st_folium(
+        _m,
+        height=220,
+        use_container_width=True,
+        returned_objects=["last_clicked"],
+    )
+
+    # Click-to-select: reverse geocode the clicked point
+    if _map_data and _map_data.get("last_clicked"):
+        _clicked = _map_data["last_clicked"]
+        _clicked_lat = _clicked.get("lat")
+        _clicked_lng = _clicked.get("lng")
+        if _clicked_lat is not None and _clicked_lng is not None and GOOGLE_PLACES_API_KEY:
+            _rev = _reverse_geocode(_clicked_lat, _clicked_lng, GOOGLE_PLACES_API_KEY)
+            if _rev and _rev != st.session_state.get("location_input", ""):
+                st.session_state["location_input"] = _rev
+                st.rerun()
 
     st.markdown("Max Results")
     max_results = st.select_slider(
