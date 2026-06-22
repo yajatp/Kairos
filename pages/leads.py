@@ -337,7 +337,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
         p["error"] = f"An unexpected error occurred: {e}"
     finally:
         try:
-            record_run(
+            run_id = record_run(
                 location=location,
                 geocode_calls=_calls["geocode"],
                 search_calls=_calls["search"],
@@ -348,8 +348,24 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 leads_found=len(p["leads_df"]) if p.get("leads_df") is not None else 0,
                 stopped_early=p.get("stop_requested", False),
             )
+            p["last_run_id"] = run_id
         except Exception:
             pass
+
+        # Push leads to Google Sheets (best-effort, non-blocking)
+        try:
+            from utils.sheets import append_leads_to_sheet
+            if p.get("leads_df") is not None and not p["leads_df"].empty:
+                from datetime import datetime as _dt
+                sheets_result = append_leads_to_sheet(
+                    df=p["leads_df"],
+                    location=location,
+                    run_date=_dt.utcnow().strftime("%Y-%m-%d"),
+                )
+                p["sheets_result"] = sheets_result
+        except Exception:
+            p["sheets_result"] = None
+
         p["running"] = False
 
 
@@ -610,13 +626,26 @@ if leads_df is not None and not _p["running"]:
 
         # ── Toolbar ─────────────────────────────────
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-        tool_c1, tool_c2, tool_c3 = st.columns([4, 1.4, 1.2])
+        tool_c1, tool_c2, tool_c3, tool_c4 = st.columns([4, 1.4, 1.2, 1.2])
         with tool_c1:
             loc_label = _p.get("search_location", "")
             st.caption(
                 f"{len(view_df)} lead{'s' if len(view_df) != 1 else ''}"
                 + (f" · {loc_label}" if loc_label else "")
             )
+            # Sheets status
+            sheets_result = _p.get("sheets_result")
+            if sheets_result is not None:
+                if "error" in sheets_result:
+                    if sheets_result["error"] == "Sheets not configured":
+                        st.caption("Sheets: not configured")
+                    else:
+                        st.caption(f"Sheets: error — {sheets_result['error']}")
+                else:
+                    tab = sheets_result.get("tab", "")
+                    added = sheets_result.get("added", 0)
+                    skipped = sheets_result.get("skipped", 0)
+                    st.caption(f"Sheets: {added} added, {skipped} skipped → {tab}")
         with tool_c2:
             sort_by = st.selectbox(
                 "Sort",
@@ -626,13 +655,27 @@ if leads_df is not None and not _p["running"]:
             )
         with tool_c3:
             loc = _p.get("search_location", "unknown")
+            fname_base = f"kairos_{loc.replace(' ','_').replace(',','')}_{datetime.now().strftime('%Y%m%d')}"
             st.download_button(
                 "Export CSV",
                 data=view_df.to_csv(index=False),
-                file_name=f"kairos_{loc.replace(' ','_').replace(',','')}_{datetime.now().strftime('%Y%m%d')}.csv",
+                file_name=f"{fname_base}.csv",
                 mime="text/csv",
                 use_container_width=True,
             )
+        with tool_c4:
+            try:
+                from utils.export import df_to_xlsx_bytes
+                xlsx_bytes = df_to_xlsx_bytes(view_df)
+                st.download_button(
+                    "Export XLSX",
+                    data=xlsx_bytes,
+                    file_name=f"{fname_base}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            except Exception:
+                st.caption("XLSX unavailable")
 
         sort_map = {
             "Pain Score ↓": ("Pain Score", False),

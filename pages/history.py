@@ -1,9 +1,10 @@
 from collections import defaultdict
 from datetime import datetime
 
+import pandas as pd
 import streamlit as st
 
-from utils.usage_tracker import get_run_history, estimated_google_cost
+from utils.usage_tracker import get_run_history, estimated_google_cost, get_leads_for_run
 
 _STATE_NAMES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
@@ -43,6 +44,142 @@ def _fmt_ts(ts: str, fmt: str = "%b %d, %Y  %H:%M") -> str:
         return datetime.fromisoformat(ts.replace("Z", "+00:00")).strftime(fmt)
     except Exception:
         return ts
+
+
+def _leads_to_df(leads: list[dict]) -> pd.DataFrame:
+    """Convert Supabase lead rows to a display DataFrame."""
+    if not leads:
+        return pd.DataFrame()
+    rows = []
+    for l in leads:
+        rows.append({
+            "Clinic Name":       l.get("name", ""),
+            "Classification":    l.get("classification", ""),
+            "Specialty":         l.get("specialty", ""),
+            "Address":           l.get("address", ""),
+            "Phone Number":      l.get("phone", ""),
+            "Website":           l.get("website", ""),
+            "Pain Score":        l.get("pain_score", 0),
+            "Pain Signal Type":  l.get("signals", ""),
+            "Outreach Angle":    l.get("outreach_angle", ""),
+            "Google Rating":     l.get("rating", ""),
+            "Total Reviews":     l.get("total_reviews", 0),
+            "Extended Hours":    "Yes" if l.get("extended_hours") else "No",
+            "Online Booking":    "Yes" if l.get("online_booking") else "No",
+            "Review Data Depth": l.get("review_depth", ""),
+        })
+    return pd.DataFrame(rows)
+
+
+def _render_run_expander(r: dict, key_prefix: str) -> None:
+    """Render the full content of a single run expander."""
+    ts      = r.get("timestamp", "")
+    g_cost  = estimated_google_cost(
+        r.get("geocode_calls", 0), r.get("search_calls", 0), r.get("detail_calls", 0)
+    )
+    stopped = r.get("stopped_early", False)
+    ts_fmt  = _fmt_ts(ts)
+    location = r.get("location", "")
+    fname_base = (
+        f"kairos_{location.replace(' ','_').replace(',','')}_{datetime.now().strftime('%Y%m%d')}"
+    )
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("**Results**")
+        st.write(f"Clinics processed: {r.get('clinics_found', 0)}")
+        st.write(f"Leads output: {r.get('leads_found', 0)}")
+        if stopped:
+            st.warning("Stopped early by user")
+    with col2:
+        st.markdown("**API Calls**")
+        st.write(f"Geocode: {r.get('geocode_calls', 0)}")
+        st.write(f"Text Search: {r.get('search_calls', 0)}")
+        st.write(f"Place Details: {r.get('detail_calls', 0)}")
+        st.write(f"Adzuna: {r.get('adzuna_calls', 0)}")
+        st.write(f"Outscraper reviews: {r.get('outscraper_reviews', 0)}")
+    with col3:
+        st.markdown("**Cost**")
+        st.write(f"Est. Google cost: ${g_cost:.3f}")
+        st.write(f"Timestamp: {ts_fmt}")
+
+    st.markdown("---")
+
+    # ── View Leads toggle ─────────────────────────────────────────────────────
+    view_key = f"{key_prefix}_view_leads"
+    if st.button("View Leads", key=f"{key_prefix}_btn_view"):
+        st.session_state[view_key] = not st.session_state.get(view_key, False)
+
+    if st.session_state.get(view_key, False):
+        leads = get_leads_for_run(location, ts)
+        if not leads:
+            st.info("No leads found in Supabase for this run. Leads are only available when Supabase is configured and the run saved leads.")
+        else:
+            leads_df = _leads_to_df(leads)
+            st.caption(f"{len(leads)} leads for this run")
+
+            # ── Export buttons ────────────────────────────────────────────────
+            exp_c1, exp_c2, exp_c3 = st.columns([4, 1.2, 1.2])
+            with exp_c2:
+                st.download_button(
+                    "Export CSV",
+                    data=leads_df.to_csv(index=False),
+                    file_name=f"{fname_base}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"{key_prefix}_csv",
+                )
+            with exp_c3:
+                try:
+                    from utils.export import df_to_xlsx_bytes
+                    xlsx_bytes = df_to_xlsx_bytes(leads_df)
+                    st.download_button(
+                        "Export XLSX",
+                        data=xlsx_bytes,
+                        file_name=f"{fname_base}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key=f"{key_prefix}_xlsx",
+                    )
+                except Exception:
+                    st.caption("XLSX unavailable")
+
+            # ── Add to Sheet button ───────────────────────────────────────────
+            sheets_state_key = f"{key_prefix}_sheets_result"
+            if st.button("Add to Sheet", key=f"{key_prefix}_btn_sheets"):
+                from utils.sheets import append_leads_to_sheet
+                run_date = _fmt_ts(ts, "%Y-%m-%d")
+                result = append_leads_to_sheet(leads_df, location, run_date)
+                st.session_state[sheets_state_key] = result
+
+            sheets_result = st.session_state.get(sheets_state_key)
+            if sheets_result is not None:
+                if "error" in sheets_result:
+                    if sheets_result["error"] == "Sheets not configured":
+                        st.info("Google Sheets not configured — add `GOOGLE_SERVICE_ACCOUNT_JSON` to secrets.")
+                    else:
+                        st.error(f"Sheets error: {sheets_result['error']}")
+                else:
+                    added   = sheets_result.get("added", 0)
+                    skipped = sheets_result.get("skipped", 0)
+                    tab     = sheets_result.get("tab", "")
+                    if added == 0 and skipped > 0:
+                        st.success(f"All {skipped} leads already in sheet → {tab}")
+                    else:
+                        st.success(f"Added {added} leads to {tab}" + (f" ({skipped} skipped)" if skipped else ""))
+
+            # ── Lead cards ────────────────────────────────────────────────────
+            from utils.helpers import render_lead_card
+
+            sorted_leads = sorted(leads, key=lambda l: l.get("pain_score", 0), reverse=True)
+            for lead in sorted_leads:
+                score = lead.get("pain_score", 0)
+                name  = lead.get("name", "Unknown")
+                city_parts = [p.strip() for p in lead.get("address", "").split(",")]
+                city  = city_parts[-3] if len(city_parts) >= 3 else (city_parts[-2] if len(city_parts) >= 2 else "")
+                label = f"{name}  ·  {city}  ·  Score {score}"
+                with st.expander(label, expanded=False):
+                    render_lead_card(lead)
 
 
 # ── Page header ─────────────────────────────────────────────────────────────────
@@ -98,36 +235,15 @@ tab_chrono, tab_geo = st.tabs(["Chronological", "By Location"])
 with tab_chrono:
     st.caption("Most recent runs first.")
 
-    for r in history:
+    for i, r in enumerate(history):
         ts      = r.get("timestamp", "")
-        g_cost  = estimated_google_cost(
-            r.get("geocode_calls", 0), r.get("search_calls", 0), r.get("detail_calls", 0)
-        )
         stopped = r.get("stopped_early", False)
         ts_fmt  = _fmt_ts(ts)
         warn    = "⚠️ " if stopped else ""
-
-        label = f"{warn}{r.get('location', 'Unknown')} — {r.get('leads_found', 0)} leads · {ts_fmt}"
+        label   = f"{warn}{r.get('location', 'Unknown')} — {r.get('leads_found', 0)} leads · {ts_fmt}"
 
         with st.expander(label, expanded=False):
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown("**Results**")
-                st.write(f"Clinics processed: {r.get('clinics_found', 0)}")
-                st.write(f"Leads output: {r.get('leads_found', 0)}")
-                if stopped:
-                    st.warning("Stopped early by user")
-            with col2:
-                st.markdown("**API Calls**")
-                st.write(f"Geocode: {r.get('geocode_calls', 0)}")
-                st.write(f"Text Search: {r.get('search_calls', 0)}")
-                st.write(f"Place Details: {r.get('detail_calls', 0)}")
-                st.write(f"Adzuna: {r.get('adzuna_calls', 0)}")
-                st.write(f"Outscraper reviews: {r.get('outscraper_reviews', 0)}")
-            with col3:
-                st.markdown("**Cost**")
-                st.write(f"Est. Google cost: ${g_cost:.3f}")
-                st.write(f"Timestamp: {ts_fmt}")
+            _render_run_expander(r, key_prefix=f"chrono_{i}")
 
 # ── By Location ──────────────────────────────────────────────────────────────────
 with tab_geo:
@@ -158,7 +274,7 @@ with tab_geo:
                     unsafe_allow_html=True,
                 )
 
-                for r in city_runs:
+                for j, r in enumerate(city_runs):
                     g_cost  = estimated_google_cost(
                         r.get("geocode_calls", 0),
                         r.get("search_calls", 0),
@@ -177,5 +293,10 @@ with tab_geo:
                     rc[3].metric("Searches", r.get("search_calls", 0))
                     rc[4].metric("Details",  r.get("detail_calls", 0))
                     rc[5].metric("Cost",     f"${g_cost:.3f}")
+
+                    # Per-run expander with leads / export / sheets
+                    run_ts_fmt = _fmt_ts(r.get("timestamp", ""))
+                    with st.expander(f"Details & Leads — {run_ts_fmt}", expanded=False):
+                        _render_run_expander(r, key_prefix=f"geo_{state}_{city}_{j}")
 
                 st.markdown("---")

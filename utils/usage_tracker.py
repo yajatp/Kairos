@@ -236,7 +236,8 @@ def record_run(
     clinics_found: int,
     leads_found: int,
     stopped_early: bool = False,
-) -> None:
+) -> int | None:
+    """Record a pipeline run and return the new run's id (Supabase only; None otherwise)."""
     payload = {
         "timestamp":          datetime.utcnow().isoformat() + "Z",
         "location":           location,
@@ -252,15 +253,21 @@ def record_run(
 
     if _supabase_ok():
         try:
+            headers = _headers(prefer="return=representation")
             resp = requests.post(
                 f"{_SUPABASE_URL}/rest/v1/runs",
-                headers=_headers(),
+                headers=headers,
                 json=payload,
                 timeout=8,
             )
-            if not resp.ok:
+            if resp.ok:
+                rows = resp.json()
+                if rows and isinstance(rows, list):
+                    return rows[0].get("id")
+                return None
+            else:
                 logger.warning(f"Supabase insert failed: {resp.status_code} {resp.text}")
-            return
+            return None
         except Exception as e:
             logger.warning(f"Supabase record_run failed: {e} — falling back to local")
 
@@ -274,6 +281,7 @@ def record_run(
     m["outscraper"]["reviews_used"] += outscraper_reviews
     state["runs"].append(payload)
     _local_save(state)
+    return None
 
 
 def record_usage(reviews_pulled: int) -> None:
@@ -310,8 +318,12 @@ def save_lead(
     extended_hours: bool,
     online_booking: bool,
     review_depth: str,
+    run_id: int | None = None,
 ) -> None:
-    """Upsert a scored lead by place_id. Silent no-op when Supabase is not configured."""
+    """Insert a scored lead. Silent no-op when Supabase is not configured.
+
+    ``run_id`` links the lead to the run row for precise future lookups.
+    """
     if not _supabase_ok():
         return
     payload = {
@@ -333,6 +345,8 @@ def save_lead(
         "review_depth":   review_depth,
         "scored_at":      datetime.utcnow().isoformat() + "Z",
     }
+    if run_id is not None:
+        payload["run_id"] = run_id
     try:
         resp = requests.post(
             f"{_SUPABASE_URL}/rest/v1/leads",
@@ -363,4 +377,77 @@ def get_leads(location: str | None = None, limit: int = 200) -> list[dict]:
         return resp.json() if resp.ok else []
     except Exception as e:
         logger.warning(f"get_leads failed: {e}")
+        return []
+
+
+def get_leads_for_run(
+    run_location: str,
+    run_timestamp: str,
+    window_minutes: int = 15,
+) -> list[dict]:
+    """Fetch leads matching a run by location + time window.
+
+    Matches rows where ``run_location`` equals the run's location AND
+    ``scored_at`` falls within ±``window_minutes`` of ``run_timestamp``.
+
+    If the leads table has a ``run_id`` column and the run row has an ``id``
+    field, callers can pass that directly to ``get_leads`` for precision;
+    this function is the timestamp-based fallback for older rows.
+    """
+    if not _supabase_ok():
+        return []
+    try:
+        from datetime import timedelta, timezone
+
+        ts = datetime.fromisoformat(run_timestamp.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        lo = (ts - timedelta(minutes=window_minutes)).isoformat()
+        hi = (ts + timedelta(minutes=window_minutes)).isoformat()
+
+        resp = requests.get(
+            f"{_SUPABASE_URL}/rest/v1/leads",
+            headers=_headers(prefer=""),
+            params={
+                "run_location": f"eq.{run_location}",
+                "scored_at":    f"gte.{lo}",
+                "and":          f"(scored_at.lte.{hi})",
+                "order":        "pain_score.desc",
+                "limit":        500,
+            },
+            timeout=8,
+        )
+        if resp.ok:
+            return resp.json()
+        # Supabase doesn't support the combined 'and' param above in all
+        # versions — fall back to a wider fetch and filter client-side.
+        resp2 = requests.get(
+            f"{_SUPABASE_URL}/rest/v1/leads",
+            headers=_headers(prefer=""),
+            params={
+                "run_location": f"eq.{run_location}",
+                "scored_at":    f"gte.{lo}",
+                "order":        "pain_score.desc",
+                "limit":        500,
+            },
+            timeout=8,
+        )
+        if not resp2.ok:
+            return []
+        hi_dt = ts + timedelta(minutes=window_minutes)
+        results = []
+        for row in resp2.json():
+            try:
+                row_ts = datetime.fromisoformat(
+                    row["scored_at"].replace("Z", "+00:00")
+                )
+                if row_ts.tzinfo is None:
+                    row_ts = row_ts.replace(tzinfo=timezone.utc)
+                if row_ts <= hi_dt:
+                    results.append(row)
+            except Exception:
+                continue
+        return results
+    except Exception as e:
+        logger.warning(f"get_leads_for_run failed: {e}")
         return []
