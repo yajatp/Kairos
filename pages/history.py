@@ -173,7 +173,7 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
     st.markdown("---")
 
     # ── Export & Sheets buttons directly in summary ──────────────────────────
-    exp_c1, exp_c2, exp_c3, exp_c4 = st.columns([1, 1, 1.2, 1.2])
+    exp_c1, exp_c2, exp_c3 = st.columns([1, 1, 1])
     with exp_c1:
         view_key = f"{key_prefix}_view_leads"
         if target_lead_place_id is not None and view_key not in st.session_state:
@@ -191,34 +191,49 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
                 result = append_leads_to_sheet(leads_df, location, run_date)
                 st.session_state[sheets_state_key] = result
     with exp_c3:
-        if not leads_df.empty:
-            st.download_button(
-                "Export CSV",
-                data=leads_df.to_csv(index=False),
-                file_name=f"{fname_base}.csv",
-                mime="text/csv",
-                use_container_width=True,
-                key=f"{key_prefix}_csv",
-            )
-        else:
-            st.button("Export CSV", disabled=True, use_container_width=True, key=f"{key_prefix}_csv_dis")
-    with exp_c4:
-        if not leads_df.empty:
-            try:
-                from utils.export import df_to_xlsx_bytes
-                xlsx_bytes = df_to_xlsx_bytes(leads_df)
+        with st.popover("Export ▾", use_container_width=True):
+            if not leads_df.empty:
                 st.download_button(
-                    "Export XLSX",
-                    data=xlsx_bytes,
-                    file_name=f"{fname_base}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "📄 CSV",
+                    data=leads_df.to_csv(index=False),
+                    file_name=f"{fname_base}.csv",
+                    mime="text/csv",
                     use_container_width=True,
-                    key=f"{key_prefix}_xlsx",
+                    key=f"{key_prefix}_csv",
                 )
-            except Exception:
-                st.caption("XLSX unavailable")
-        else:
-            st.button("Export XLSX", disabled=True, use_container_width=True, key=f"{key_prefix}_xlsx_dis")
+                try:
+                    from utils.export import df_to_xlsx_bytes
+                    st.download_button(
+                        "📊 XLSX",
+                        data=df_to_xlsx_bytes(leads_df),
+                        file_name=f"{fname_base}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key=f"{key_prefix}_xlsx",
+                    )
+                except Exception:
+                    pass
+                st.markdown("---")
+                phones_emails = leads_df[["Clinic Name", "Phone Number", "Contact Email", "Address"]].copy()
+                st.download_button(
+                    "📱 Phones & Emails",
+                    data=phones_emails.to_csv(index=False),
+                    file_name=f"{fname_base}_contacts.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"{key_prefix}_contacts",
+                )
+                outreach = leads_df[["Clinic Name", "Pain Signal Type", "Pain Score", "Outreach Angle", "Phone Number", "Contact Email"]].copy()
+                st.download_button(
+                    "🎯 Outreach List",
+                    data=outreach.to_csv(index=False),
+                    file_name=f"{fname_base}_outreach.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"{key_prefix}_outreach",
+                )
+            else:
+                st.caption("No leads to export")
 
     sheets_result = st.session_state.get(sheets_state_key)
     if sheets_result is not None:

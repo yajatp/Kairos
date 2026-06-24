@@ -239,6 +239,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 "has_online_booking":     website_data["has_online_booking"],
                 "has_hiring_banner":      website_data["has_hiring_banner"],
                 "detected_tools":         website_data["detected_tools"],
+                "extracted_email":        website_data.get("extracted_email", ""),
                 "rating":                 details.get("rating", 0),
                 "user_ratings_total":     details.get("user_ratings_total", 0),
             }
@@ -358,7 +359,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 "Phone Number":        details.get("formatted_phone_number", ""),
                 "Best Contact Found":  "Office Manager",
                 "Contact Role":        "Office Manager",
-                "Contact Email":       "",
+                "Contact Email":       clinic_data.get("extracted_email", ""),
                 "LinkedIn":            "",
                 "Number of Locations": 1,
                 "Pain Signal Type":    " | ".join(signals) if signals else "None detected",
@@ -423,6 +424,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 online_booking=bool(clinic_data.get("has_online_booking")),
                 review_depth=review_depth_label,
                 reviews_json=reviews_json,
+                email=clinic_data.get("extracted_email", ""),
                 run_id=run_id,
             )
 
@@ -939,7 +941,7 @@ if leads_df is not None and not _p["running"]:
 
         # ── Toolbar ─────────────────────────────────
         st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
-        tool_c1, tool_c2, tool_c3, tool_c4 = st.columns([4, 1.4, 1.2, 1.2])
+        tool_c1, tool_c2, tool_c3 = st.columns([4, 1.4, 1.2])
         with tool_c1:
             loc_label = _p.get("search_location", "")
             st.caption(
@@ -969,26 +971,42 @@ if leads_df is not None and not _p["running"]:
         with tool_c3:
             loc = _p.get("search_location", "unknown")
             fname_base = f"kairos_{loc.replace(' ','_').replace(',','')}_{datetime.now().strftime('%Y%m%d')}"
-            st.download_button(
-                "Export CSV",
-                data=view_df.to_csv(index=False),
-                file_name=f"{fname_base}.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-        with tool_c4:
-            try:
-                from utils.export import df_to_xlsx_bytes
-                xlsx_bytes = df_to_xlsx_bytes(view_df)
+            with st.popover("Export ▾", use_container_width=True):
                 st.download_button(
-                    "Export XLSX",
-                    data=xlsx_bytes,
-                    file_name=f"{fname_base}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    "📄 CSV (full)",
+                    data=view_df.to_csv(index=False),
+                    file_name=f"{fname_base}.csv",
+                    mime="text/csv",
                     use_container_width=True,
                 )
-            except Exception:
-                st.caption("XLSX unavailable")
+                try:
+                    from utils.export import df_to_xlsx_bytes
+                    st.download_button(
+                        "📊 XLSX (formatted)",
+                        data=df_to_xlsx_bytes(view_df),
+                        file_name=f"{fname_base}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
+                except Exception:
+                    pass
+                st.markdown("---")
+                phones_emails = view_df[["Clinic Name", "Phone Number", "Contact Email", "Address"]].copy()
+                st.download_button(
+                    "📱 Phones & Emails",
+                    data=phones_emails.to_csv(index=False),
+                    file_name=f"{fname_base}_contacts.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+                outreach = view_df[["Clinic Name", "Pain Signal Type", "Pain Score", "Outreach Angle", "Phone Number", "Contact Email"]].copy()
+                st.download_button(
+                    "🎯 Outreach List",
+                    data=outreach.to_csv(index=False),
+                    file_name=f"{fname_base}_outreach.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
 
         sort_map = {
             "Pain Score ↓": ("Pain Score", False),

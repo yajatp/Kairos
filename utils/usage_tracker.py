@@ -370,6 +370,7 @@ def save_lead(
     online_booking: bool,
     review_depth: str,
     reviews_json: str = None,  # -- Run: ALTER TABLE leads ADD COLUMN IF NOT EXISTS reviews_json TEXT;
+    email: str = "",  # -- Run: ALTER TABLE leads ADD COLUMN IF NOT EXISTS email TEXT;
     run_id: int | None = None,
 ) -> None:
     """Insert a scored lead. Silent no-op when Supabase is not configured.
@@ -397,6 +398,7 @@ def save_lead(
         "review_depth":   review_depth,
         "scored_at":      datetime.utcnow().isoformat() + "Z",
         "reviews_json":   reviews_json,
+        "email":          email,
     }
     if run_id is not None:
         payload["run_id"] = run_id

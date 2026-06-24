@@ -1,4 +1,6 @@
 import logging
+import re
+
 import requests
 
 logger = logging.getLogger(__name__)
@@ -23,7 +25,14 @@ _DEFAULTS = {
     "has_online_booking": False,
     "has_hiring_banner": False,
     "detected_tools": [],
+    "extracted_email": "",
 }
+
+_EMAIL_NOISE = [
+    "example.com", "yourdomain", "sentry", "wixpress", "wixsite",
+    "squarespace", "wordpress", "adobe", "amazonaws", "cloudflare",
+    "schema.org", "w3.org", "github", "npm", "unpkg", "cdn", "jquery",
+]
 
 
 def check_website(url: str) -> dict:
@@ -50,9 +59,20 @@ def check_website(url: str) -> dict:
     if has_online_booking and "online booking" not in detected_tools:
         detected_tools.append("online booking")
 
+    # ── Email extraction ────────────────────────────────────────────────────────
+    raw_emails = re.findall(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}', text)
+    mailto_emails = re.findall(r'mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})', resp.text)
+    all_emails = list(dict.fromkeys(mailto_emails + raw_emails))  # deduplicate, mailto first
+    extracted_email = ""
+    for email in all_emails:
+        if not any(noise in email.lower() for noise in _EMAIL_NOISE):
+            extracted_email = email.lower()
+            break
+
     return {
         "uses_digital_tools": uses_digital_tools,
         "has_online_booking": has_online_booking,
         "has_hiring_banner": has_hiring_banner,
         "detected_tools": detected_tools,
+        "extracted_email": extracted_email,
     }
