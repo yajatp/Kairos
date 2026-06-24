@@ -138,6 +138,8 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
     p["stop_requested"]  = False
     p["progress"]        = 0
     p["messages"]        = []
+    p["fallback_count"]  = 0
+    p["run_errors"]      = []
     p["leads_df"]        = None
     p["error"]           = None
     p["search_location"] = location
@@ -223,17 +225,20 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
             website_data  = check_website(details.get("website"))
             job_match     = match_clinic_to_job(details.get("name", ""), jobs)
 
-            # Respect the review analysis mode toggle set in the sidebar
-            _mode     = p.get("review_mode", "Pattern (fast)")
-            _gem_key  = p.get("gemini_key", "")
-            if _mode == "AI (accurate)" and _gem_key:
+            _gem_key = p.get("gemini_key", "")
+            if _gem_key:
                 from pipeline.review_scanner_ab import scan_method_b
                 try:
                     review_data = scan_method_b(details.get("reviews", []), _gem_key)
-                except Exception:
+                    review_data["review_method"] = "ai"
+                except Exception as _e:
                     review_data = scan_reviews(details.get("reviews", []))
+                    review_data["review_method"] = "pattern_fallback"
+                    p["fallback_count"] = p.get("fallback_count", 0) + 1
+                    p["run_errors"].append(f"AI review failed ({details.get('name','?')}): {str(_e)[:120]}")
             else:
                 review_data = scan_reviews(details.get("reviews", []))
+                review_data["review_method"] = "pattern"
             review_data["review_source"] = "places_sample"
             extended      = detect_extended_hours(details.get("opening_hours"))
             specialty     = infer_specialty(details.get("name", ""), details.get("types", []))
@@ -302,7 +307,20 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 record_usage(len(deep_reviews))
                 _calls["outscraper_reviews"] += len(deep_reviews)
 
-                dr = scan_reviews(deep_reviews)
+                _gem_key = p.get("gemini_key", "")
+                if _gem_key:
+                    from pipeline.review_scanner_ab import scan_method_b as _smb
+                    try:
+                        dr = _smb(deep_reviews, _gem_key)
+                        dr["review_method"] = "ai"
+                    except Exception as _e:
+                        dr = scan_reviews(deep_reviews)
+                        dr["review_method"] = "pattern_fallback"
+                        p["fallback_count"] = p.get("fallback_count", 0) + 1
+                        p["run_errors"].append(f"AI deep scan failed ({leads[idx]['details'].get('name','?')}): {str(_e)[:120]}")
+                else:
+                    dr = scan_reviews(deep_reviews)
+                    dr["review_method"] = "pattern"
                 dr["review_source"] = "outscraper_deep"
                 leads[idx]["clinic_data"].update({
                     "pain_review_count":    dr["pain_review_count"],
@@ -386,6 +404,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 "Extended Hours":      "Yes" if clinic_data.get("extended_hours") else "No",
                 "Online Booking":      "Yes" if clinic_data.get("has_online_booking") else "No",
                 "Review Data Depth":   review_depth_label,
+                "Review Method":       review_data.get("review_method", "pattern"),
                 "reviews_json":        reviews_json,
             })
 
@@ -403,6 +422,8 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 leads_found=len(final_leads),
                 stopped_early=p.get("stop_requested", False),
                 radius_miles=radius_miles,
+                pattern_fallback_count=p.get("fallback_count", 0),
+                run_errors=p.get("run_errors", []),
             )
             p["last_run_id"] = run_id
         except Exception as e:
@@ -471,6 +492,8 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                     leads_found=len(p["leads_df"]) if p.get("leads_df") is not None else 0,
                     stopped_early=p.get("stop_requested", False),
                     radius_miles=radius_miles,
+                    pattern_fallback_count=p.get("fallback_count", 0),
+                    run_errors=p.get("run_errors", []),
                 )
                 p["last_run_id"] = run_id
             except Exception:
@@ -711,25 +734,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ── Review analysis mode toggle ─────────────────────────────────────────
-    GEMINI_API_KEY = _get_secret("GEMINI_API_KEY")
-    st.markdown("Review Analysis Mode")
-    review_mode = st.radio(
-        "Mode",
-        ["Pattern (fast)", "AI (accurate)"],
-        label_visibility="collapsed",
-        horizontal=True,
-        key="review_mode",
-        help=(
-            "Pattern: instant keyword matching, no API cost.\n"
-            "AI: Gemini reads all reviews — catches nuanced complaints, ~2-5s/clinic, "
-            "requires GEMINI_API_KEY."
-        ),
-    )
-    st.session_state["_review_mode"] = review_mode
-    if review_mode == "AI (accurate)" and not GEMINI_API_KEY:
-        st.caption("Set GEMINI_API_KEY to enable AI mode.")
-
     st.markdown("")
     find_leads = st.button(
         "Find Leads",
@@ -825,9 +829,7 @@ if find_leads:
     # Clear the "run anyway" flag so it doesn't persist to future searches
     st.session_state.pop("_overlap_run_anyway", None)
 
-    # Pass review mode and Gemini key into pipeline state before thread starts
-    _p["review_mode"] = st.session_state.get("_review_mode", "Pattern (fast)")
-    _p["gemini_key"]  = _get_secret("GEMINI_API_KEY")
+    _p["gemini_key"] = _get_secret("GEMINI_API_KEY")
 
     threading.Thread(
         target=_run_pipeline,
@@ -1063,6 +1065,14 @@ if leads_df is not None and not _p["running"]:
 
         st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
+        # Fallback banner — shown when Gemini was unavailable for some clinics
+        if _p.get("fallback_count", 0) > 0:
+            st.warning(
+                f"{_p['fallback_count']} clinic(s) used pattern matching — "
+                "Gemini was unavailable during this run. "
+                "Leads marked 'pattern' may have lower review accuracy."
+            )
+
         # ── Grouped lead rows ────────────────────────
         GROUPS = [
             ("High Priority", view_df[view_df["Pain Score"] >= 6],                                  "#ef4444"),
@@ -1090,8 +1100,10 @@ if leads_df is not None and not _p["running"]:
                 city   = row["City"]
                 rating = row.get("Google Rating", "")
                 rating_str = f"  ·  {rating} stars" if rating else ""
+                method = row.get("Review Method", "")
+                method_flag = "  · pattern" if method == "pattern_fallback" else ""
 
-                label = f"{name}  ·  {city}  ·  Score {score}{rating_str}"
+                label = f"{name}  ·  {city}  ·  Score {score}{rating_str}{method_flag}"
 
                 with st.expander(label, expanded=False):
                     from utils.helpers import render_lead_card

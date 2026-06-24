@@ -246,6 +246,12 @@ def render_lead_card(row: dict) -> None:
         if depth:
             st.caption(f"Review depth: {depth}")
 
+        review_method = _get("Review Method", "review_method", "")
+        if review_method == "pattern_fallback":
+            st.caption("Review analysis: pattern matching (Gemini unavailable)")
+        elif review_method == "ai":
+            st.caption("Review analysis: AI")
+
     with col_b:
         st.markdown(_pain_badge(score), unsafe_allow_html=True)
         st.markdown("")

@@ -247,8 +247,11 @@ def record_run(
     leads_found: int,
     stopped_early: bool = False,
     radius_miles: int | None = None,
+    pattern_fallback_count: int = 0,
+    run_errors: list | None = None,
 ) -> int | None:
     """Record a pipeline run and return the new run's id (Supabase only; None otherwise)."""
+    import json as _json
     payload = {
         "timestamp":          datetime.utcnow().isoformat() + "Z",
         "location":           location,
@@ -263,6 +266,10 @@ def record_run(
     }
     if radius_miles is not None:
         payload["radius_miles"] = radius_miles
+    if pattern_fallback_count:
+        payload["pattern_fallback_count"] = pattern_fallback_count
+    if run_errors:
+        payload["run_errors"] = _json.dumps(run_errors)
 
     if _supabase_ok():
         try:
@@ -278,24 +285,24 @@ def record_run(
                 if rows and isinstance(rows, list):
                     return rows[0].get("id")
                 return None
-            else:
-                # If radius_miles column doesn't exist yet, retry without it
-                if radius_miles is not None and resp.status_code in (400, 422):
-                    payload_no_radius = {k: v for k, v in payload.items() if k != "radius_miles"}
-                    resp2 = requests.post(
-                        f"{_SUPABASE_URL}/rest/v1/runs",
-                        headers=_headers(prefer="return=representation"),
-                        json=payload_no_radius,
-                        timeout=8,
-                    )
-                    if resp2.ok:
-                        rows2 = resp2.json()
-                        if rows2 and isinstance(rows2, list):
-                            return rows2[0].get("id")
-                    else:
-                        logger.warning(f"Supabase insert failed: {resp2.status_code} {resp2.text}")
+            elif resp.status_code in (400, 422):
+                # Strip optional columns and retry — handles missing migrations gracefully
+                optional_cols = {"radius_miles", "pattern_fallback_count", "run_errors"}
+                trimmed = {k: v for k, v in payload.items() if k not in optional_cols}
+                resp2 = requests.post(
+                    f"{_SUPABASE_URL}/rest/v1/runs",
+                    headers=_headers(prefer="return=representation"),
+                    json=trimmed,
+                    timeout=8,
+                )
+                if resp2.ok:
+                    rows2 = resp2.json()
+                    if rows2 and isinstance(rows2, list):
+                        return rows2[0].get("id")
                 else:
-                    logger.warning(f"Supabase insert failed: {resp.status_code} {resp.text}")
+                    logger.warning(f"Supabase insert failed: {resp2.status_code} {resp2.text}")
+            else:
+                logger.warning(f"Supabase insert failed: {resp.status_code} {resp.text}")
             return None
         except Exception as e:
             logger.warning(f"Supabase record_run failed: {e} — falling back to local")

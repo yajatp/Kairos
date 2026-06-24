@@ -173,8 +173,13 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         if leads else pd.DataFrame()
     )
 
+    fallback_ct = r.get("pattern_fallback_count", 0) or 0
+    run_errors_raw = r.get("run_errors", "") or ""
     _stopped_html = ("<br><span style='color:#c2410c;font-size:12px;font-weight:500'>Stopped early</span>"
                      if stopped else "")
+    _fallback_html = (f"<br><span style='color:#b45309;font-size:12px;font-weight:500'>"
+                      f"Pattern fallback: {fallback_ct} clinic(s)</span>"
+                      if fallback_ct else "")
     st.markdown(
         "<div style='background:rgba(24,62,53,0.06);border-radius:8px;padding:14px 16px;"
         "border-left:3px solid #3abdaf;margin-bottom:12px'>"
@@ -184,7 +189,7 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         "letter-spacing:0.07em;margin-bottom:8px'>Results</div>"
         f"<div style='font-size:13px;color:#282a30;line-height:1.8'>"
         f"Clinics processed: <strong>{r.get('clinics_found', 0)}</strong><br>"
-        f"Leads output: <strong>{r.get('leads_found', 0)}</strong>{_stopped_html}</div></div>"
+        f"Leads output: <strong>{r.get('leads_found', 0)}</strong>{_stopped_html}{_fallback_html}</div></div>"
         "<div>"
         "<div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;"
         "letter-spacing:0.07em;margin-bottom:8px'>API Calls</div>"
@@ -205,6 +210,16 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         "</div></div>",
         unsafe_allow_html=True,
     )
+
+    if run_errors_raw:
+        try:
+            import json as _json
+            _errs = _json.loads(run_errors_raw) if isinstance(run_errors_raw, str) else run_errors_raw
+        except Exception:
+            _errs = [str(run_errors_raw)]
+        with st.expander(f"Run errors ({len(_errs)})", expanded=False):
+            for _err in _errs:
+                st.caption(_err)
 
     st.markdown("---")
 

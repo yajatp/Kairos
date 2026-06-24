@@ -133,7 +133,7 @@ def append_leads_to_sheet(
             "Address", "Website", "Phone Number", "Best Contact Found", "Contact Role", "Contact Email",
             "LinkedIn", "Number of Locations", "Pain Signal Type", "Evidence / Source", "Pain Score",
             "Outreach Angle", "Notes", "Google Rating", "Total Reviews", "Hours Summary", "Extended Hours",
-            "Online Booking", "Review Data Depth", "reviews_json"
+            "Online Booking", "Review Data Depth", "Review Method", "Run Errors", "reviews_json"
         ]
 
         ws = _get_or_create_worksheet(spreadsheet, tab_name, headers)
@@ -208,6 +208,8 @@ def append_leads_to_sheet(
                 row.get("Extended Hours", "Yes" if row.get("Extended Hours") == "Yes" or row.get("extended_hours") is True else "No"),
                 row.get("Online Booking", "Yes" if row.get("Online Booking") == "Yes" or row.get("online_booking") is True else "No"),
                 row.get("Review Data Depth", row.get("review_depth", "")),
+                row.get("Review Method", row.get("review_method", "")),
+                row.get("Run Errors", row.get("run_errors", "")),
                 row.get("reviews_json", ""),
             ]
 
