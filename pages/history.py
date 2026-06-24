@@ -6,6 +6,10 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
+import importlib
+import utils.usage_tracker
+importlib.reload(utils.usage_tracker)
+
 from utils.usage_tracker import get_run_history, estimated_google_cost, estimated_outscraper_cost, get_leads_for_run, OUTSCRAPER_BILLING_OFFSET_USD, get_leads_for_runs_bulk
 from utils.helpers import safe_parse_datetime
 
