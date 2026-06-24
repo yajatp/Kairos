@@ -364,19 +364,34 @@ SAMPLE_REVIEWS[17] = {
 # Gemini helper
 # ---------------------------------------------------------------------------
 
-def _call_gemini(prompt: str, api_key: str) -> str:
-    """Call Gemini 1.5 Flash and return raw text response."""
+def _call_gemini(prompt: str, api_key: str, retries: int = 3) -> str:
+    """Call Gemini 2.5 Flash and return raw text response. Retries on 429."""
+    import time as _time
     try:
-        import google.generativeai as genai  # type: ignore
+        from google import genai  # type: ignore
     except ImportError:
         raise ImportError(
-            "google-generativeai package not installed. "
-            "Run: pip install google-generativeai>=0.7.0"
+            "google-genai package not installed. "
+            "Run: pip install google-genai"
         )
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    response = model.generate_content(prompt)
-    return response.text
+    client = genai.Client(api_key=api_key)
+    for attempt in range(retries):
+        try:
+            response = client.models.generate_content(
+                model="gemini-3.1-flash-lite",
+                contents=prompt,
+            )
+            return response.text
+        except Exception as e:
+            err_str = str(e)
+            if "429" in err_str and attempt < retries - 1:
+                # Parse retry delay from error if available, else use 65s
+                import re as _re
+                m = _re.search(r"retry in (\d+)", err_str)
+                wait = int(m.group(1)) + 2 if m else 65
+                _time.sleep(wait)
+            else:
+                raise
 
 
 def _extract_json(raw: str) -> any:
