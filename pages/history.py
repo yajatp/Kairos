@@ -487,7 +487,9 @@ with tab_chrono:
         warn     = ":material/warning: " if stopped else ""
         run_id   = r.get("id")
         expanded = (_target_run_id is not None and run_id == _target_run_id)
-        label    = f"{warn}{r.get('location', 'Unknown')} — {r.get('leads_found', 0)} leads · {ts_fmt}"
+        _pfc     = r.get("pattern_fallback_count")
+        _ai_tag  = "  ·  pattern matching" if _pfc is None else ("  ·  pattern fallback" if _pfc else "")
+        label    = f"{warn}{r.get('location', 'Unknown')} — {r.get('leads_found', 0)} leads · {ts_fmt}{_ai_tag}"
 
         with st.expander(label, expanded=expanded):
             _render_run_expander(
@@ -553,7 +555,9 @@ with tab_geo:
 
                     # Per-run expander with leads / export / sheets
                     run_ts_fmt = _fmt_ts(r.get("timestamp", ""))
-                    with st.expander(f"Details & Leads — {run_ts_fmt}", expanded=False):
+                    _r_pfc     = r.get("pattern_fallback_count")
+                    _r_ai_tag  = "  ·  pattern matching" if _r_pfc is None else ("  ·  pattern fallback" if _r_pfc else "")
+                    with st.expander(f"Details & Leads — {run_ts_fmt}{_r_ai_tag}", expanded=False):
                         _render_run_expander(r, key_prefix=f"geo_{state}_{city}_{j}")
 
                 st.markdown("---")
