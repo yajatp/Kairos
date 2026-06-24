@@ -61,6 +61,10 @@ TRACKER_FILE = Path("api_usage.json")
 
 OUTSCRAPER_MONTHLY_LIMIT    = 400
 OUTSCRAPER_REVIEW_COST      = 0.003   # $3 per 1,000 reviews
+# Spending that happened before Supabase was connected (not in tracked reviews).
+# Set this to: actual_billing_balance - (tracked_reviews * OUTSCRAPER_REVIEW_COST).
+# Reset to 0.0 when switching to company APIs.
+OUTSCRAPER_BILLING_OFFSET_USD = 4.89
 GOOGLE_MONTHLY_CREDIT_USD   = 200.0
 GOOGLE_GEOCODE_COST         = 0.005
 GOOGLE_SEARCH_COST          = 0.032
@@ -116,7 +120,7 @@ def estimated_google_cost(geocode: int, searches: int, details: int) -> float:
 
 
 def estimated_outscraper_cost(reviews: int) -> float:
-    return reviews * OUTSCRAPER_REVIEW_COST
+    return OUTSCRAPER_BILLING_OFFSET_USD + reviews * OUTSCRAPER_REVIEW_COST
 
 
 def _current_ym() -> str:

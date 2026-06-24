@@ -13,6 +13,7 @@ from utils.usage_tracker import (
     GOOGLE_SEARCH_COST,
     GOOGLE_DETAIL_COST,
     OUTSCRAPER_REVIEW_COST,
+    OUTSCRAPER_BILLING_OFFSET_USD,
     ADZUNA_DAILY_LIMIT,
 )
 
@@ -69,7 +70,11 @@ st.markdown("---")
 
 # ── Outscraper ───────────────────────────────────────────────────────────────────
 st.markdown("### Outscraper — Deep Reviews")
-st.caption(f"\\${OUTSCRAPER_REVIEW_COST}/review · $3 per 1,000 reviews")
+st.caption(
+    f"\\${OUTSCRAPER_REVIEW_COST}/review · "
+    f"includes \\${OUTSCRAPER_BILLING_OFFSET_USD:.2f} pre-tracking offset — "
+    "reset to 0 when switching to company APIs"
+)
 
 reviews_used = o.get("reviews_used", 0)
 o_cost_month = estimated_outscraper_cost(reviews_used)
