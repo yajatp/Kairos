@@ -586,3 +586,42 @@ def get_leads_for_run(
     except Exception as e:
         logger.warning(f"get_leads_for_run failed: {e}")
         return []
+
+
+def get_leads_for_runs_bulk(run_ids: list[int]) -> dict[int, list[dict]]:
+    """Fetch leads matching a list of run_ids in a single HTTP request.
+
+    Returns a dictionary mapping run_id -> list of lead dicts.
+    """
+    if not _supabase_ok() or not run_ids:
+        return {}
+
+    valid_ids = [str(rid) for rid in run_ids if rid is not None]
+    if not valid_ids:
+        return {}
+
+    try:
+        from collections import defaultdict
+        id_str = ",".join(valid_ids)
+        resp = requests.get(
+            f"{_SUPABASE_URL}/rest/v1/leads",
+            headers=_headers(prefer=""),
+            params={
+                "run_id": f"in.({id_str})",
+                "order": "pain_score.desc",
+                "limit": 5000,
+            },
+            timeout=10,
+        )
+        if resp.ok:
+            rows = resp.json()
+            grouped = defaultdict(list)
+            for r in rows:
+                rid = r.get("run_id")
+                if rid is not None:
+                    grouped[rid].append(r)
+            return dict(grouped)
+    except Exception as e:
+        logger.warning(f"get_leads_for_runs_bulk failed: {e}")
+    return {}
+

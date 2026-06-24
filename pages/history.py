@@ -6,7 +6,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from utils.usage_tracker import get_run_history, estimated_google_cost, estimated_outscraper_cost, get_leads_for_run, OUTSCRAPER_BILLING_OFFSET_USD
+from utils.usage_tracker import get_run_history, estimated_google_cost, estimated_outscraper_cost, get_leads_for_run, OUTSCRAPER_BILLING_OFFSET_USD, get_leads_for_runs_bulk
 from utils.helpers import safe_parse_datetime
 
 _STATE_NAMES = {
@@ -25,6 +25,10 @@ _STATE_NAMES = {
     "WI": "Wisconsin", "WY": "Wyoming", "DC": "Washington D.C.",
 }
 _STATE_ABBRS = set(_STATE_NAMES.keys())
+
+
+def toggle_view_leads(view_key: str) -> None:
+    st.session_state[view_key] = not st.session_state.get(view_key, False)
 
 
 def _parse_location(loc: str) -> tuple[str, str]:
@@ -226,8 +230,13 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
     # ── Export & Sheets buttons directly in summary ──────────────────────────
     exp_c1, exp_c2, exp_c3 = st.columns([1, 1, 1])
     with exp_c1:
-        if st.button("View Leads", key=f"{key_prefix}_btn_view", use_container_width=True):
-            st.session_state[view_key] = not st.session_state.get(view_key, False)
+        st.button(
+            "View Leads",
+            key=f"{key_prefix}_btn_view",
+            on_click=toggle_view_leads,
+            args=(view_key,),
+            use_container_width=True,
+        )
     with exp_c2:
         sheets_state_key = f"{key_prefix}_sheets_result"
         if leads_df.empty:
@@ -365,7 +374,7 @@ st.markdown(
 )
 
 if "history_limit" not in st.session_state:
-    st.session_state["history_limit"] = 50
+    st.session_state["history_limit"] = 25
 
 with st.spinner("Loading run history..."):
     history = get_run_history(st.session_state["history_limit"])
@@ -384,17 +393,17 @@ if not history:
     )
     st.stop()
 
-# ── Prefetch leads for the 5 most recent runs so View Leads is instant ───────────
-for _pf in history[:5]:
-    _pf_id  = _pf.get("id")
-    _pf_key = f"_leads_{_pf_id}" if _pf_id else f"_leads_{_pf.get('timestamp', '')}"
-    if _pf_key not in st.session_state:
-        try:
-            st.session_state[_pf_key] = get_leads_for_run(
-                _pf.get("location", ""), _pf.get("timestamp", ""), run_id=_pf_id
-            )
-        except Exception:
-            pass
+# ── Prefetch leads in bulk for all visible runs so View Leads is instant ─────────
+_run_ids = [r.get("id") for r in history if r.get("id") is not None]
+_missing_ids = [_rid for _rid in _run_ids if f"_leads_{_rid}" not in st.session_state]
+
+if _missing_ids:
+    try:
+        _bulk_leads = get_leads_for_runs_bulk(_missing_ids)
+        for _rid in _missing_ids:
+            st.session_state[f"_leads_{_rid}"] = _bulk_leads.get(_rid, [])
+    except Exception:
+        pass
 
 # ── Summary stats ────────────────────────────────────────────────────────────────
 total_runs   = len(history)
@@ -422,7 +431,7 @@ with c_refresh:
         for key in list(st.session_state.keys()):
             if key.startswith("_leads_"):
                 del st.session_state[key]
-        st.session_state["history_limit"] = 50
+        st.session_state["history_limit"] = 25
         st.cache_data.clear()
         st.rerun()
 
@@ -482,7 +491,7 @@ with tab_chrono:
 
     if len(history) >= st.session_state["history_limit"]:
         if st.button("Load more runs", use_container_width=False, key="chrono_load_more"):
-            st.session_state["history_limit"] += 50
+            st.session_state["history_limit"] += 25
             st.rerun()
 
 # ── By Location ──────────────────────────────────────────────────────────────────
