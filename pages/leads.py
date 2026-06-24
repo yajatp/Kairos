@@ -790,7 +790,7 @@ if not OUTSCRAPER_API_KEY:
 
 
 @st.dialog("Run Already Exists")
-def confirm_run_dialog(location_str, radius, date_str):
+def confirm_run_dialog(location_str, radius, date_str, pipeline_state, max_res):
     st.write(
         f"You already searched **{location_str}** at a **{radius}mi radius** on **{date_str}**."
     )
@@ -801,7 +801,14 @@ def confirm_run_dialog(location_str, radius, date_str):
             st.rerun()
     with col_proceed:
         if st.button("Proceed Anyway", use_container_width=True, type="primary"):
-            st.session_state["_overlap_run_anyway"] = True
+            pipeline_state["running"]    = True
+            pipeline_state["leads_df"]   = None
+            pipeline_state["gemini_key"] = _get_secret("GEMINI_API_KEY")
+            threading.Thread(
+                target=_run_pipeline,
+                args=(pipeline_state, location_str, radius, max_res),
+                daemon=True,
+            ).start()
             st.rerun()
 
 
@@ -816,19 +823,18 @@ if find_leads:
 
     # B1 — exact query deduplication check
     prior_run = get_exact_run(location.strip(), radius_miles)
-    if prior_run and not st.session_state.get("_overlap_run_anyway"):
+    if prior_run:
         from datetime import datetime as _dt
         try:
             prior_ts = _dt.fromisoformat(prior_run["timestamp"].replace("Z", "+00:00"))
             prior_date_str = prior_ts.strftime("%b %d, %Y")
         except Exception:
             prior_date_str = prior_run.get("timestamp", "")
-        confirm_run_dialog(location.strip(), radius_miles, prior_date_str)
+        confirm_run_dialog(location.strip(), radius_miles, prior_date_str, _p, max_results)
         st.stop()
 
-    # Clear the "run anyway" flag so it doesn't persist to future searches
-    st.session_state.pop("_overlap_run_anyway", None)
-
+    _p["running"]    = True
+    _p["leads_df"]   = None
     _p["gemini_key"] = _get_secret("GEMINI_API_KEY")
 
     threading.Thread(

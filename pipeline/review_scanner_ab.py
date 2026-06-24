@@ -365,7 +365,6 @@ SAMPLE_REVIEWS[17] = {
 # ---------------------------------------------------------------------------
 
 def _call_gemini(prompt: str, api_key: str, retries: int = 3) -> str:
-    """Call Gemini 2.5 Flash and return raw text response. Retries on 429."""
     import time as _time
     try:
         from google import genai  # type: ignore
@@ -385,7 +384,6 @@ def _call_gemini(prompt: str, api_key: str, retries: int = 3) -> str:
         except Exception as e:
             err_str = str(e)
             if "429" in err_str and attempt < retries - 1:
-                # Parse retry delay from error if available, else use 65s
                 import re as _re
                 m = _re.search(r"retry in (\d+)", err_str)
                 wait = int(m.group(1)) + 2 if m else 65
