@@ -147,9 +147,24 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         f"kairos_{location.replace(' ','_').replace(',','')}_{datetime.now().strftime('%Y%m%d')}"
     )
 
-    # Pre-fetch leads and dataframe for export buttons
-    leads = get_leads_for_run(location, ts, run_id=run_id)
-    leads_df = _leads_to_df(leads, radius_miles=radius_miles, run_date=_fmt_ts(ts, "%Y-%m-%d"))
+    # ── Lazy leads cache ─────────────────────────────────────────────────────────
+    leads_cache_key = f"_leads_{run_id}" if run_id else f"_leads_{ts}"
+    view_key = f"{key_prefix}_view_leads"
+
+    # Deep-link: force view open and ensure cache is populated immediately
+    if target_lead_place_id is not None and view_key not in st.session_state:
+        st.session_state[view_key] = True
+
+    # Fetch only when View Leads is active AND not already cached
+    if st.session_state.get(view_key, False) and leads_cache_key not in st.session_state:
+        with st.spinner("Loading leads..."):
+            st.session_state[leads_cache_key] = get_leads_for_run(location, ts, run_id=run_id)
+
+    leads = st.session_state.get(leads_cache_key, [])
+    leads_df = (
+        _leads_to_df(leads, radius_miles=radius_miles, run_date=_fmt_ts(ts, "%Y-%m-%d"))
+        if leads else pd.DataFrame()
+    )
 
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -175,17 +190,15 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
     # ── Export & Sheets buttons directly in summary ──────────────────────────
     exp_c1, exp_c2, exp_c3 = st.columns([1, 1, 1])
     with exp_c1:
-        view_key = f"{key_prefix}_view_leads"
-        if target_lead_place_id is not None and view_key not in st.session_state:
-            st.session_state[view_key] = True
         if st.button("View Leads", key=f"{key_prefix}_btn_view", use_container_width=True):
             st.session_state[view_key] = not st.session_state.get(view_key, False)
     with exp_c2:
         sheets_state_key = f"{key_prefix}_sheets_result"
-        if st.button("Add to Sheet", key=f"{key_prefix}_btn_sheets", use_container_width=True):
-            if leads_df.empty:
-                st.session_state[sheets_state_key] = {"error": "No leads to add"}
-            else:
+        if leads_df.empty:
+            st.button("Add to Sheet", disabled=True, use_container_width=True, key=f"{key_prefix}_btn_sheets")
+            st.caption("Click 'View Leads' to load data")
+        else:
+            if st.button("Add to Sheet", key=f"{key_prefix}_btn_sheets", use_container_width=True):
                 from utils.sheets import append_leads_to_sheet
                 run_date = _fmt_ts(ts, "%Y-%m-%d")
                 result = append_leads_to_sheet(leads_df, location, run_date)
@@ -233,7 +246,7 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
                     key=f"{key_prefix}_outreach",
                 )
             else:
-                st.caption("No leads to export")
+                st.caption("Click 'View Leads' to load data")
 
     sheets_result = st.session_state.get(sheets_state_key)
     if sheets_result is not None:
@@ -309,8 +322,11 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-with st.spinner("Loading run history from Supabase..."):
-    history = get_run_history(200)
+if "history_limit" not in st.session_state:
+    st.session_state["history_limit"] = 50
+
+with st.spinner("Loading run history..."):
+    history = get_run_history(st.session_state["history_limit"])
 
 if not history:
     st.markdown(
@@ -337,11 +353,20 @@ unique_cities = len({r.get("location", "") for r in history})
 
 st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4, c_refresh = st.columns([1, 1, 1, 1, 0.6])
 c1.metric("Total Runs",            total_runs)
 c2.metric("Total Leads Generated", total_leads)
 c3.metric("Unique Locations",      unique_cities)
 c4.metric("Est. Cumulative Cost",  f"${total_cost:.2f}")
+with c_refresh:
+    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+    if st.button("🔄 Refresh", help="Reload run history from database", use_container_width=True):
+        for key in list(st.session_state.keys()):
+            if key.startswith("_leads_"):
+                del st.session_state[key]
+        st.session_state["history_limit"] = 50
+        st.cache_data.clear()
+        st.rerun()
 
 st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
@@ -396,6 +421,11 @@ with tab_chrono:
                 key_prefix=f"chrono_{i}",
                 target_lead_place_id=(_target_lead_place_id if expanded else None)
             )
+
+    if len(history) >= st.session_state["history_limit"]:
+        if st.button("Load more runs", use_container_width=False, key="chrono_load_more"):
+            st.session_state["history_limit"] += 50
+            st.rerun()
 
 # ── By Location ──────────────────────────────────────────────────────────────────
 with tab_geo:
