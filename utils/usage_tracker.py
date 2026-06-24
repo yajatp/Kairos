@@ -204,17 +204,20 @@ def get_run_history(limit: int = 20) -> list[dict]:
                 # Normalise field names to match local format
                 return [
                     {
-                        "id":                  r.get("id"),
-                        "timestamp":           r.get("timestamp", ""),
-                        "location":            r.get("location", ""),
-                        "geocode_calls":       r.get("geocode_calls", 0),
-                        "search_calls":        r.get("search_calls", 0),
-                        "detail_calls":        r.get("detail_calls", 0),
-                        "adzuna_calls":        r.get("adzuna_calls", 0),
-                        "outscraper_reviews":  r.get("outscraper_reviews", 0),
-                        "clinics_found":       r.get("clinics_found", 0),
-                        "leads_found":         r.get("leads_found", 0),
-                        "stopped_early":       r.get("stopped_early", False),
+                        "id":                      r.get("id"),
+                        "timestamp":               r.get("timestamp", ""),
+                        "location":                r.get("location", ""),
+                        "geocode_calls":           r.get("geocode_calls", 0),
+                        "search_calls":            r.get("search_calls", 0),
+                        "detail_calls":            r.get("detail_calls", 0),
+                        "adzuna_calls":            r.get("adzuna_calls", 0),
+                        "outscraper_reviews":      r.get("outscraper_reviews", 0),
+                        "clinics_found":           r.get("clinics_found", 0),
+                        "leads_found":             r.get("leads_found", 0),
+                        "stopped_early":           r.get("stopped_early", False),
+                        "radius_miles":            r.get("radius_miles"),
+                        "pattern_fallback_count":  r.get("pattern_fallback_count"),  # None = pre-AI run
+                        "run_errors":              r.get("run_errors"),
                     }
                     for r in rows
                 ]
@@ -266,8 +269,8 @@ def record_run(
     }
     if radius_miles is not None:
         payload["radius_miles"] = radius_miles
-    if pattern_fallback_count:
-        payload["pattern_fallback_count"] = pattern_fallback_count
+    # Always write pattern_fallback_count (even 0) — NULL means pre-AI run, 0 means full AI
+    payload["pattern_fallback_count"] = pattern_fallback_count
     if run_errors:
         payload["run_errors"] = _json.dumps(run_errors)
 
