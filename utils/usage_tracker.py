@@ -120,7 +120,7 @@ def estimated_google_cost(geocode: int, searches: int, details: int) -> float:
 
 
 def estimated_outscraper_cost(reviews: int) -> float:
-    return OUTSCRAPER_BILLING_OFFSET_USD + reviews * OUTSCRAPER_REVIEW_COST
+    return reviews * OUTSCRAPER_REVIEW_COST
 
 
 def _current_ym() -> str:

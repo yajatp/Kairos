@@ -6,7 +6,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from utils.usage_tracker import get_run_history, estimated_google_cost, estimated_outscraper_cost, get_leads_for_run
+from utils.usage_tracker import get_run_history, estimated_google_cost, estimated_outscraper_cost, get_leads_for_run, OUTSCRAPER_BILLING_OFFSET_USD
 from utils.helpers import safe_parse_datetime
 
 _STATE_NAMES = {
@@ -160,7 +160,12 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
     # Fetch only when View Leads is active AND not already cached
     if st.session_state.get(view_key, False) and leads_cache_key not in st.session_state:
         with st.spinner("Loading leads..."):
-            st.session_state[leads_cache_key] = get_leads_for_run(location, ts, run_id=run_id)
+            try:
+                st.session_state[leads_cache_key] = get_leads_for_run(location, ts, run_id=run_id)
+            except Exception:
+                st.warning("Connection issue — click View Leads again to retry.")
+                st.session_state[view_key] = False
+                st.stop()
 
     leads = st.session_state.get(leads_cache_key, [])
     leads_df = (
@@ -364,13 +369,28 @@ if not history:
     )
     st.stop()
 
+# ── Prefetch leads for the 5 most recent runs so View Leads is instant ───────────
+for _pf in history[:5]:
+    _pf_id  = _pf.get("id")
+    _pf_key = f"_leads_{_pf_id}" if _pf_id else f"_leads_{_pf.get('timestamp', '')}"
+    if _pf_key not in st.session_state:
+        try:
+            st.session_state[_pf_key] = get_leads_for_run(
+                _pf.get("location", ""), _pf.get("timestamp", ""), run_id=_pf_id
+            )
+        except Exception:
+            pass
+
 # ── Summary stats ────────────────────────────────────────────────────────────────
 total_runs   = len(history)
 total_leads  = sum(r.get("leads_found", 0) for r in history)
-total_cost   = sum(
-    estimated_google_cost(r.get("geocode_calls", 0), r.get("search_calls", 0), r.get("detail_calls", 0))
-    + estimated_outscraper_cost(r.get("outscraper_reviews", 0))
-    for r in history
+total_cost   = (
+    sum(
+        estimated_google_cost(r.get("geocode_calls", 0), r.get("search_calls", 0), r.get("detail_calls", 0))
+        + estimated_outscraper_cost(r.get("outscraper_reviews", 0))
+        for r in history
+    )
+    + OUTSCRAPER_BILLING_OFFSET_USD
 )
 unique_cities = len({r.get("location", "") for r in history})
 

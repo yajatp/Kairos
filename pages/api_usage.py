@@ -77,11 +77,11 @@ st.caption(
 )
 
 reviews_used = o.get("reviews_used", 0)
-o_cost_month = estimated_outscraper_cost(reviews_used)
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Reviews Pulled This Month", reviews_used)
-col2.metric("Est. Outscraper Cost",      f"${o_cost_month:.2f}")
+col1.metric("Reviews Pulled (Tracked)",  reviews_used)
+col2.metric("Actual Billed This Period", f"${OUTSCRAPER_BILLING_OFFSET_USD:.2f}",
+            help="From app.outscraper.cloud/billing — update OUTSCRAPER_BILLING_OFFSET_USD when this changes")
 col3.metric("Month",                     datetime.now().strftime("%B %Y"))
 
 st.markdown("---")
