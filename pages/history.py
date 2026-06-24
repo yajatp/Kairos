@@ -166,43 +166,34 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         if leads else pd.DataFrame()
     )
 
-    stopped_badge = "<span style='color:#c2410c;font-size:12px;font-weight:500'>Stopped early</span>" if stopped else ""
+    _stopped_html = ("<br><span style='color:#c2410c;font-size:12px;font-weight:500'>Stopped early</span>"
+                     if stopped else "")
     st.markdown(
-        f"""
-        <div style='background:rgba(24,62,53,0.06);border-radius:8px;padding:14px 16px;
-                    border-left:3px solid #3abdaf;margin-bottom:12px'>
-          <div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px'>
-            <div>
-              <div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;
-                          letter-spacing:0.07em;margin-bottom:8px'>Results</div>
-              <div style='font-size:13px;color:#282a30;line-height:1.8'>
-                Clinics processed: <strong>{r.get('clinics_found', 0)}</strong><br>
-                Leads output: <strong>{r.get('leads_found', 0)}</strong><br>
-                {stopped_badge}
-              </div>
-            </div>
-            <div>
-              <div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;
-                          letter-spacing:0.07em;margin-bottom:8px'>API Calls</div>
-              <div style='font-size:13px;color:#282a30;line-height:1.8'>
-                Geocode: {r.get('geocode_calls', 0)}<br>
-                Text Search: {r.get('search_calls', 0)}<br>
-                Place Details: {r.get('detail_calls', 0)}<br>
-                Adzuna: {r.get('adzuna_calls', 0)}<br>
-                Outscraper: {r.get('outscraper_reviews', 0)}
-              </div>
-            </div>
-            <div>
-              <div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;
-                          letter-spacing:0.07em;margin-bottom:8px'>Cost</div>
-              <div style='font-size:13px;color:#282a30;line-height:1.8'>
-                Est. Google: <strong>${g_cost:.3f}</strong><br>
-                <span style='color:#6b6f76;font-size:12px'>{ts_fmt}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-        """,
+        "<div style='background:rgba(24,62,53,0.06);border-radius:8px;padding:14px 16px;"
+        "border-left:3px solid #3abdaf;margin-bottom:12px'>"
+        "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px'>"
+        "<div>"
+        "<div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;"
+        "letter-spacing:0.07em;margin-bottom:8px'>Results</div>"
+        f"<div style='font-size:13px;color:#282a30;line-height:1.8'>"
+        f"Clinics processed: <strong>{r.get('clinics_found', 0)}</strong><br>"
+        f"Leads output: <strong>{r.get('leads_found', 0)}</strong>{_stopped_html}</div></div>"
+        "<div>"
+        "<div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;"
+        "letter-spacing:0.07em;margin-bottom:8px'>API Calls</div>"
+        f"<div style='font-size:13px;color:#282a30;line-height:1.8'>"
+        f"Geocode: {r.get('geocode_calls', 0)}<br>"
+        f"Text Search: {r.get('search_calls', 0)}<br>"
+        f"Place Details: {r.get('detail_calls', 0)}<br>"
+        f"Adzuna: {r.get('adzuna_calls', 0)}<br>"
+        f"Outscraper: {r.get('outscraper_reviews', 0)}</div></div>"
+        "<div>"
+        "<div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;"
+        "letter-spacing:0.07em;margin-bottom:8px'>Cost</div>"
+        f"<div style='font-size:13px;color:#282a30;line-height:1.8'>"
+        f"Est. Google: <strong>${g_cost:.3f}</strong><br>"
+        f"<span style='color:#6b6f76;font-size:12px'>{ts_fmt}</span></div></div>"
+        "</div></div>",
         unsafe_allow_html=True,
     )
 
