@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from datetime import date
 
 import folium
@@ -46,6 +47,7 @@ def _init_pipeline_state() -> None:
 
 
 def _run_pipeline(
+    p: dict,
     polygon_coords: list[list[float]],
     buffer_miles: float,
     area_name: str,
@@ -53,7 +55,6 @@ def _run_pipeline(
     gemini_key: str,
 ) -> None:
     """Runs in a background thread; writes results back into session state."""
-    p = st.session_state._donut_pipeline
 
     def progress(msg: str, frac: float = 0.0) -> None:
         p["message"] = msg
@@ -496,7 +497,7 @@ if run_clicked:
                 })
                 t = threading.Thread(
                     target=_run_pipeline,
-                    args=(polygon_coords, buffer_miles, area_name, api_key, gemini_key),
+                    args=(p, polygon_coords, buffer_miles, area_name, api_key, gemini_key),
                     daemon=True,
                 )
                 t.start()
@@ -509,7 +510,7 @@ if run_clicked:
             })
             t = threading.Thread(
                 target=_run_pipeline,
-                args=(polygon_coords, buffer_miles, area_name, api_key, gemini_key),
+                args=(p, polygon_coords, buffer_miles, area_name, api_key, gemini_key),
                 daemon=True,
             )
             t.start()
@@ -522,6 +523,7 @@ if p["running"]:
     prog_msg = p.get("message", "Running...")
     st.progress(prog_pct, text=prog_msg)
     st.caption("This takes 30–90 seconds depending on area size. Do not navigate away.")
+    time.sleep(0.5)
     st.rerun()
 
 # Error display
