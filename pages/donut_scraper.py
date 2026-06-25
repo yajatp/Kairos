@@ -238,6 +238,34 @@ def _render_draw_map() -> list[list[float]] | None:
 
     folium.LayerControl(position="bottomright", collapsed=True).add_to(m)
 
+    # Auto-toggle labels: show on Satellite, hide on any other base layer
+    _auto_labels_js = """
+    <script>
+    (function() {
+        var map = Object.values(window).find(function(v) {
+            return v instanceof L.Map;
+        });
+        if (!map) return;
+        var labelsLayer = null;
+        map.eachLayer(function(layer) {
+            if (layer.options && layer.options.attribution &&
+                layer.options.attribution.indexOf('CartoDB') !== -1) {
+                labelsLayer = layer;
+            }
+        });
+        if (!labelsLayer) return;
+        map.on('baselayerchange', function(e) {
+            if (e.name === 'Satellite') {
+                map.addLayer(labelsLayer);
+            } else {
+                map.removeLayer(labelsLayer);
+            }
+        });
+    })();
+    </script>
+    """
+    m.get_root().html.add_child(folium.Element(_auto_labels_js))
+
     Draw(
         export=False,
         position="topleft",
