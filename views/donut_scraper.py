@@ -249,9 +249,15 @@ def _render_draw_map() -> list[list[float]] | None:
     (function() {
         var checkCount = 0;
         function initAutoLabels() {
-            var mapKey = Object.keys(window).find(function(k) {
-                return k.startsWith('map_') && window[k] && typeof window[k].addLayer === 'function';
-            });
+            var mapKey = null;
+            for (var k in window) {
+                try {
+                    if (k && k.startsWith && k.startsWith('map_') && window[k] && typeof window[k].addLayer === 'function') {
+                        mapKey = k;
+                        break;
+                    }
+                } catch(e) {}
+            }
             if (!mapKey) {
                 checkCount++;
                 if (checkCount < 100) {
