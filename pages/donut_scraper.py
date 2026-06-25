@@ -16,7 +16,11 @@ from pipeline.donut_search import (
     estimate_circle_count,
     filter_by_polygon,
     run_grid_search,
+    compute_polygon_area_sqmi,
+    compute_polygon_centroid,
 )
+from pipeline.places import reverse_geocode
+import math
 from pipeline.donut_enrichment import enrich_clinic
 from utils.donut_sheets import write_run_to_sheet
 
@@ -44,6 +48,10 @@ def _init_pipeline_state() -> None:
             "buffer_miles": 0.5,
             "area_name": "",
             "sheet_result": None,
+            "last_calculated_polygon": None,
+            "area_sqmi": 0.0,
+            "city_state": "",
+            "auto_buffer_miles": 0.5,
         }
 
 
@@ -149,14 +157,17 @@ _SIDEBAR_CSS = """
 
 def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
     """Render sidebar controls. Returns (buffer_miles, area_name, run_clicked, estimate_clicked)."""
+    if "buffer_slider" not in st.session_state:
+        st.session_state.buffer_slider = 0.5
+
     st.markdown("<div class='ds-section-label'>Buffer Distance</div>", unsafe_allow_html=True)
     buffer_miles = st.number_input(
         "Miles outside drawn polygon to include",
         min_value=0.0,
         max_value=5.0,
-        value=0.5,
         step=0.1,
         format="%.1f",
+        key="buffer_slider",
         label_visibility="collapsed",
     )
     st.caption(f"{buffer_miles:.1f} mi buffer around drawn polygon")
@@ -461,8 +472,52 @@ else:
     new_polygon_coords = _render_draw_map()
     if new_polygon_coords:
         p["polygon_coords"] = new_polygon_coords
+        
+        # Auto-calculate stats if it's a newly drawn polygon
+        if new_polygon_coords != p.get("last_calculated_polygon"):
+            area = compute_polygon_area_sqmi(new_polygon_coords)
+            lat, lng = compute_polygon_centroid(new_polygon_coords)
+            api_key = _get_secret("GOOGLE_PLACES_API_KEY")
+            city_state = reverse_geocode(lat, lng, api_key) if api_key else "Unknown Location"
+            
+            calc_buf = max(0.1, min(5.0, math.sqrt(area) * 0.2))
+            auto_buf = round(calc_buf, 1)
+            
+            p["area_sqmi"] = area
+            p["city_state"] = city_state
+            p["auto_buffer_miles"] = auto_buf
+            p["last_calculated_polygon"] = new_polygon_coords
+            st.session_state.buffer_slider = auto_buf
+            st.rerun()
 
 polygon_coords = p.get("polygon_coords")
+
+# Feedback Card
+if polygon_coords and not p["running"]:
+    area = p.get("area_sqmi", 0.0)
+    city = p.get("city_state", "Unknown Location")
+    buf = p.get("auto_buffer_miles", 0.5)
+    
+    st.markdown(
+        f"""
+        <div style='background:#f7f7f8; border:1px solid #ededed; border-radius:8px; padding:16px; margin-top:16px; display:flex; gap:16px; flex-wrap:wrap;'>
+            <div style='flex:1; min-width:120px;'>
+                <div style='font-size:11px; font-weight:600; color:#6b6f76; text-transform:uppercase; letter-spacing:0.05em;'>Encompassed Area</div>
+                <div style='font-size:16px; font-weight:600; color:#183e34; margin-top:4px;'>{area:.1f} sq miles</div>
+            </div>
+            <div style='flex:1; min-width:120px;'>
+                <div style='font-size:11px; font-weight:600; color:#6b6f76; text-transform:uppercase; letter-spacing:0.05em;'>Primary Location</div>
+                <div style='font-size:16px; font-weight:600; color:#183e34; margin-top:4px;'>{city}</div>
+            </div>
+            <div style='flex:1; min-width:120px;'>
+                <div style='font-size:11px; font-weight:600; color:#6b6f76; text-transform:uppercase; letter-spacing:0.05em;'>Auto-Buffer Picked</div>
+                <div style='font-size:16px; font-weight:600; color:#183e34; margin-top:4px;'>{buf:.1f} miles</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.caption("You can override this suggested buffer distance using the sidebar before clicking Run.")
 
 # Estimate button
 if estimate_clicked:

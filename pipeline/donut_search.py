@@ -178,6 +178,36 @@ def compute_polygon_iou(coords1: list[list[float]], coords2: list[list[float]]) 
         return 0.0
 
 
+def compute_polygon_area_sqmi(coords: list[list[float]]) -> float:
+    """Approximate the area of the polygon in square miles."""
+    try:
+        from shapely.geometry import Polygon
+        poly = Polygon([(c[0], c[1]) for c in coords])
+        area_sq_deg = poly.area
+        # Approx: 1 deg lat = 69 miles, 1 deg lng = 69 * cos(lat) miles
+        centroid_lat = poly.centroid.y
+        miles_per_deg_lng = 69.0 * math.cos(math.radians(centroid_lat))
+        miles_per_deg_lat = 69.0
+        # Area in sq miles = area_sq_deg * (miles_per_deg_lat * miles_per_deg_lng)
+        return area_sq_deg * (miles_per_deg_lat * miles_per_deg_lng)
+    except Exception:
+        return 0.0
+
+
+def compute_polygon_centroid(coords: list[list[float]]) -> tuple[float, float]:
+    """Return (lat, lng) of the polygon's centroid."""
+    try:
+        from shapely.geometry import Polygon
+        poly = Polygon([(c[0], c[1]) for c in coords])
+        return (poly.centroid.y, poly.centroid.x)
+    except Exception:
+        if not coords:
+            return (0.0, 0.0)
+        lats = [c[1] for c in coords]
+        lngs = [c[0] for c in coords]
+        return (sum(lats) / len(lats), sum(lngs) / len(lngs))
+
+
 def filter_by_polygon(
     clinics: list[dict],
     polygon_coords: list[list[float]],

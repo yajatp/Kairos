@@ -56,6 +56,38 @@ def geocode(location: str, api_key: str) -> tuple[float, float, str]:
     return loc["lat"], loc["lng"], resolved_name
 
 
+def reverse_geocode(lat: float, lng: float, api_key: str) -> str:
+    """Reverse geocode a coordinate to a City, State format."""
+    try:
+        resp = requests.get(
+            GEOCODE_URL,
+            params={"latlng": f"{lat},{lng}", "key": api_key},
+            timeout=10,
+        )
+        data = resp.json()
+        if data.get("status") != "OK" or not data.get("results"):
+            return "Unknown Location"
+        
+        # Parse city and state from the first result's components
+        components = data["results"][0].get("address_components", [])
+        city, state = "", ""
+        for comp in components:
+            if "locality" in comp["types"]:
+                city = comp["short_name"]
+            if "administrative_area_level_1" in comp["types"]:
+                state = comp["short_name"]
+                
+        if city and state:
+            return f"{city}, {state}"
+        elif city:
+            return city
+        else:
+            return "Unknown Location"
+    except Exception:
+        return "Unknown Location"
+
+
+
 def search_clinics(lat: float, lng: float, radius_miles: int, max_results: int, api_key: str) -> list[dict]:
     radius_meters = min(int(radius_miles * 1609.34), 50000)
     results = []
