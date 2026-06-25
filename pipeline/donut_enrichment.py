@@ -56,7 +56,10 @@ def _fetch_page(url: str) -> tuple[str, str]:
         return "", ""
 
     text = _get_visible_text(html)
-    if len(text) < _MIN_VISIBLE_TEXT_LEN:
+    # NOTE: Playwright fallback disabled to speed up Streamlit Cloud deploys.
+    # Set _PLAYWRIGHT_ENABLED = True to re-enable headless browser scraping.
+    _PLAYWRIGHT_ENABLED = False
+    if _PLAYWRIGHT_ENABLED and len(text) < _MIN_VISIBLE_TEXT_LEN:
         pw_text = _fetch_with_playwright(url)
         if pw_text:
             return html, pw_text
