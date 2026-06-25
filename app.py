@@ -21,7 +21,7 @@ _logo_b64   = base64.b64encode(_logo_bytes).decode()
 
 _how_to_page      = st.Page("pages/how_to.py",       title="How to Use",   icon=":material/help:",        default=True)
 _leads_page       = st.Page("pages/leads.py",        title="Find Leads",   icon=":material/search:")
-_donut_page       = st.Page("pages/donut_scraper.py", title="Field Ops",    icon=":material/map:")
+_donut_page       = st.Page("pages/donut_scraper.py", title="Donut Scraper", icon=":material/map:")
 _api_usage_page   = st.Page("pages/api_usage.py",    title="API Usage",    icon=":material/bar_chart:")
 _history_page     = st.Page("pages/history.py",      title="History",      icon=":material/history:")
 
@@ -41,7 +41,7 @@ with st.sidebar:
     )
     st.page_link(_how_to_page,    label="How to Use",  icon=":material/help:")
     st.page_link(_leads_page,     label="Find Leads",  icon=":material/search:")
-    st.page_link(_donut_page,     label="Field Ops",   icon=":material/map:")
+    st.page_link(_donut_page,     label="Donut Scraper", icon=":material/map:")
     st.page_link(_api_usage_page, label="API Usage",   icon=":material/bar_chart:")
     st.page_link(_history_page,   label="History",     icon=":material/history:")
 

@@ -386,7 +386,7 @@ st.markdown(
     "<div class='page-header-linear'>"
     "<span class='bc-parent'>Kairos</span>"
     "<span class='bc-sep'>/</span>"
-    "<span class='bc-current'>Field Ops — Area Scraper</span>"
+    "<span class='bc-current'>Donut Scraper</span>"
     "</div>",
     unsafe_allow_html=True,
 )
