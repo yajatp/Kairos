@@ -63,11 +63,38 @@ def _fetch_page(url: str) -> tuple[str, str]:
     return html, text
 
 
+_pw_browser_ready: bool = False
+
+
+def _ensure_playwright_browser() -> bool:
+    """Download Chromium binary on first use (no-op if already present)."""
+    global _pw_browser_ready
+    if _pw_browser_ready:
+        return True
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["playwright", "install", "chromium"],
+            capture_output=True,
+            timeout=180,
+        )
+        _pw_browser_ready = result.returncode == 0
+        if not _pw_browser_ready:
+            logger.warning("playwright install chromium exited %d", result.returncode)
+        return _pw_browser_ready
+    except Exception as e:
+        logger.warning("Could not install Playwright Chromium: %s", e)
+        return False
+
+
 def _fetch_with_playwright(url: str) -> str:
-    """Headless render fallback for JS-heavy sites. Silent no-op if Playwright not installed."""
+    """Headless render fallback for JS-heavy sites. Silent no-op if Playwright not available."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
+        return ""
+
+    if not _ensure_playwright_browser():
         return ""
 
     try:
