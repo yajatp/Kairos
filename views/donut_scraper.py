@@ -250,7 +250,7 @@ def _render_draw_map() -> list[list[float]] | None:
         var checkCount = 0;
         function initAutoLabels() {
             var mapKey = Object.keys(window).find(function(k) {
-                return k.startsWith('map_');
+                return k.startsWith('map_') && window[k] && typeof window[k].addLayer === 'function';
             });
             if (!mapKey) {
                 checkCount++;

@@ -674,7 +674,7 @@ with st.sidebar:
     (function() {
         function initScale() {
             var mapKey = Object.keys(window).find(function(k) {
-                return k.startsWith('map_');
+                return k.startsWith('map_') && window[k] && typeof window[k].addLayer === 'function';
             });
             if (!mapKey) {
                 setTimeout(initScale, 100);
