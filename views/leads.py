@@ -673,20 +673,11 @@ with st.sidebar:
     <script>
     (function() {
         function initScale() {
-            var mapKey = null;
-            for (var k in window) {
-                try {
-                    if (k && k.startsWith && k.startsWith('map_') && window[k] && typeof window[k].addLayer === 'function') {
-                        mapKey = k;
-                        break;
-                    }
-                } catch(e) {}
-            }
-            if (!mapKey) {
+            var map = window['MAP_VAR_NAME'];
+            if (!map) {
                 setTimeout(initScale, 100);
                 return;
             }
-            var map = window[mapKey];
             
             // Add custom scale control
             var scaleControl = L.control.scale({metric: false, imperial: true});
@@ -740,6 +731,7 @@ with st.sidebar:
     })();
     </script>
     """
+    _scale_js = _scale_js.replace("MAP_VAR_NAME", _m.get_name())
     _m.get_root().html.add_child(folium.Element(_scale_js))
 
     _map_data = st_folium(

@@ -249,23 +249,14 @@ def _render_draw_map() -> list[list[float]] | None:
     (function() {
         var checkCount = 0;
         function initAutoLabels() {
-            var mapKey = null;
-            for (var k in window) {
-                try {
-                    if (k && k.startsWith && k.startsWith('map_') && window[k] && typeof window[k].addLayer === 'function') {
-                        mapKey = k;
-                        break;
-                    }
-                } catch(e) {}
-            }
-            if (!mapKey) {
+            var map = window['MAP_VAR_NAME'];
+            if (!map) {
                 checkCount++;
                 if (checkCount < 100) {
                     setTimeout(initAutoLabels, 100);
                 }
                 return;
             }
-            var map = window[mapKey];
             var labelsLayer = L.tileLayer(
                 'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
                 {
@@ -334,6 +325,7 @@ def _render_draw_map() -> list[list[float]] | None:
     })();
     </script>
     """
+    _auto_labels_js = _auto_labels_js.replace("MAP_VAR_NAME", m.get_name())
     m.get_root().html.add_child(folium.Element(_auto_labels_js))
 
     Draw(
