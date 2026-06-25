@@ -194,8 +194,8 @@ _TILE_LAYERS = {
     },
 }
 
-# Esri reference overlay – road/place labels drawn on top of satellite imagery
-_ESRI_LABELS_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Reference_Overlay/MapServer/tile/{z}/{y}/{x}"
+# CartoDB dark labels overlay – bold white text readable on satellite imagery
+_SATELLITE_LABELS_URL = "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
 
 
 def _render_draw_map() -> list[list[float]] | None:
@@ -226,10 +226,10 @@ def _render_draw_map() -> list[list[float]] | None:
             folium.TileLayer(cfg["tiles"], name=name, control=True, show=first).add_to(m)
         first = False
 
-    # Labels overlay for satellite – renders road names, city labels, etc.
+    # Labels overlay for satellite – bold white road/city labels
     folium.TileLayer(
-        tiles=_ESRI_LABELS_URL,
-        attr="Esri Reference",
+        tiles=_SATELLITE_LABELS_URL,
+        attr="&copy; CartoDB",
         name="Labels (satellite)",
         overlay=True,
         control=True,
