@@ -454,12 +454,13 @@ with st.sidebar:
     else:
         st.caption(":material/psychology_alt: No GEMINI_API_KEY — regex-only extraction")
 
-# Draw map (always visible at top of main area)
-st.markdown("**Draw your target area** — polygon only, one shape at a time")
-new_polygon_coords = _render_draw_map()
-
-if new_polygon_coords:
-    p["polygon_coords"] = new_polygon_coords
+if p["running"]:
+    st.info("Map is locked while the scraper is running.")
+else:
+    st.markdown("**Draw your target area** — polygon only, one shape at a time")
+    new_polygon_coords = _render_draw_map()
+    if new_polygon_coords:
+        p["polygon_coords"] = new_polygon_coords
 
 polygon_coords = p.get("polygon_coords")
 
