@@ -7,6 +7,7 @@ from datetime import date
 import folium
 import pandas as pd
 import streamlit as st
+from branca.element import MacroElement, Template
 from folium.plugins import Draw
 from streamlit_folium import st_folium
 
@@ -194,8 +195,6 @@ _TILE_LAYERS = {
     },
 }
 
-# CartoDB dark labels overlay – bold white text readable on satellite imagery
-_SATELLITE_LABELS_URL = "https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png"
 
 
 def _render_draw_map() -> list[list[float]] | None:
@@ -226,45 +225,29 @@ def _render_draw_map() -> list[list[float]] | None:
             folium.TileLayer(cfg["tiles"], name=name, control=True, show=first).add_to(m)
         first = False
 
-    # Labels overlay for satellite – bold white road/city labels
-    folium.TileLayer(
-        tiles=_SATELLITE_LABELS_URL,
-        attr="&copy; CartoDB",
-        name="Labels (satellite)",
-        overlay=True,
-        control=True,
-        show=False,
-    ).add_to(m)
-
     folium.LayerControl(position="bottomright", collapsed=True).add_to(m)
 
-    # Auto-toggle labels: show on Satellite, hide on any other base layer
-    _auto_labels_js = """
-    <script>
-    (function() {
-        var map = Object.values(window).find(function(v) {
-            return v instanceof L.Map;
-        });
-        if (!map) return;
-        var labelsLayer = null;
-        map.eachLayer(function(layer) {
-            if (layer.options && layer.options.attribution &&
-                layer.options.attribution.indexOf('CartoDB') !== -1) {
-                labelsLayer = layer;
-            }
-        });
-        if (!labelsLayer) return;
-        map.on('baselayerchange', function(e) {
-            if (e.name === 'Satellite') {
-                map.addLayer(labelsLayer);
-            } else {
-                map.removeLayer(labelsLayer);
-            }
-        });
-    })();
-    </script>
-    """
-    m.get_root().html.add_child(folium.Element(_auto_labels_js))
+    # Auto satellite labels – no toggle, injected via Leaflet JS at map init
+    class _SatLabels(MacroElement):
+        _template = Template("""
+            {% macro script(this, kwargs) %}
+            (function() {
+                var map = {{ this._parent.get_name() }};
+                var labelsLayer = L.tileLayer(
+                    'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
+                    {attribution: '© CartoDB', pane: 'overlayPane', zIndex: 650}
+                );
+                map.on('baselayerchange', function(e) {
+                    if (e.name === 'Satellite') {
+                        map.addLayer(labelsLayer);
+                    } else {
+                        map.removeLayer(labelsLayer);
+                    }
+                });
+            })();
+            {% endmacro %}
+        """)
+    _SatLabels().add_to(m)
 
     Draw(
         export=False,
