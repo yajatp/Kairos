@@ -651,6 +651,7 @@ with st.sidebar:
         zoom_control=True,
         scrollWheelZoom=True,
         attributionControl=False,
+        control_scale=True,
     )
 
     if _map_marker:

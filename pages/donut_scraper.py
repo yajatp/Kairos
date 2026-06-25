@@ -218,7 +218,7 @@ def _render_draw_map() -> list[list[float]] | None:
         center_lng = sum(lngs) / len(lngs)
 
     # Street (OSM) is the default base layer (show=True)
-    m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles=None)
+    m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles=None, control_scale=True)
 
     first = True
     for name, cfg in _TILE_LAYERS.items():
