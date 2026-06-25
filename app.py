@@ -14,7 +14,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.markdown(get_css(), unsafe_allow_html=True)
 
 _logo_bytes = Path("logo.png").read_bytes()
 _logo_b64   = base64.b64encode(_logo_bytes).decode()
@@ -28,6 +27,7 @@ _history_page     = st.Page("pages/history.py",      title="History",      icon=
 pg = st.navigation([_how_to_page, _leads_page, _donut_page, _api_usage_page, _history_page])
 
 with st.sidebar:
+    st.markdown(get_css(), unsafe_allow_html=True)
     st.markdown(
         f"<div class='workspace-header'>"
         f"<img src='data:image/png;base64,{_logo_b64}' class='workspace-logo' />"
