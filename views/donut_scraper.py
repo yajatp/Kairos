@@ -249,14 +249,14 @@ def _render_draw_map() -> list[list[float]] | None:
     (function() {
         var checkCount = 0;
         function initAutoLabels() {
-            var map = window['MAP_VAR_NAME'];
-            if (!map) {
+            if (typeof MAP_VAR_NAME === 'undefined') {
                 checkCount++;
                 if (checkCount < 100) {
                     setTimeout(initAutoLabels, 100);
                 }
                 return;
             }
+            var map = MAP_VAR_NAME;
             var labelsLayer = L.tileLayer(
                 'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
                 {

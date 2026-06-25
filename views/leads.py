@@ -673,11 +673,11 @@ with st.sidebar:
     <script>
     (function() {
         function initScale() {
-            var map = window['MAP_VAR_NAME'];
-            if (!map) {
+            if (typeof MAP_VAR_NAME === 'undefined') {
                 setTimeout(initScale, 100);
                 return;
             }
+            var map = MAP_VAR_NAME;
             
             // Add custom scale control
             var scaleControl = L.control.scale({metric: false, imperial: true});
