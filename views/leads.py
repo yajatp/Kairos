@@ -685,38 +685,6 @@ with st.sidebar:
             // Add custom scale control
             var scaleControl = L.control.scale({metric: false, imperial: true});
             scaleControl.addTo(map);
-            var scaleContainer = scaleControl.getContainer();
-            
-            // Move container out of the control corner so it doesn't get clipped or restricted
-            map.getContainer().appendChild(scaleContainer);
-            scaleContainer.style.position = 'absolute';
-            scaleContainer.style.bottom = '30px';
-            scaleContainer.style.left = '10px';
-            scaleContainer.style.zIndex = '1000';
-            scaleContainer.style.cursor = 'grab';
-            scaleContainer.style.pointerEvents = 'auto';
-            scaleContainer.style.background = 'rgba(255,255,255,0.9)';
-            scaleContainer.style.padding = '4px 30px 4px 8px';
-            scaleContainer.style.borderRadius = '4px';
-            scaleContainer.style.boxShadow = '0 1px 5px rgba(0,0,0,0.4)';
-            scaleContainer.title = 'Drag to measure distances';
-            
-            var resetBtn = document.createElement('div');
-            resetBtn.innerHTML = '↺';
-            resetBtn.title = 'Reset Scale Position';
-            resetBtn.style.cssText = 'position:absolute; right:8px; top:50%; transform:translateY(-50%); cursor:pointer; font-size:18px; color:#183e34; font-weight:bold;';
-            resetBtn.onclick = function(e) {
-                e.stopPropagation();
-                scaleContainer.style.transform = ''; // Reset L.Draggable translation
-            };
-            scaleContainer.appendChild(resetBtn);
-            
-            // Use Leaflet's Draggable but stop click propagation so the map doesn't drag
-            var draggable = new L.Draggable(scaleContainer);
-            draggable.enable();
-            L.DomEvent.disableClickPropagation(scaleContainer);
-            draggable.on('dragstart', function() { scaleContainer.style.cursor = 'grabbing'; });
-            draggable.on('dragend', function() { scaleContainer.style.cursor = 'grab'; });
         }
         function waitLeaflet() {
             if (typeof L !== 'undefined') {
