@@ -67,7 +67,7 @@ def _tile_bounding_box(
 
 
 def _nearby_search_page(
-    lat: float, lng: float, radius_m: float, api_key: str, page_token: str | None = None,
+    lat: float, lng: float, radius_m: float, api_key: str,
 ) -> dict:
     body: dict = {
         "locationRestriction": {
@@ -79,8 +79,6 @@ def _nearby_search_page(
         "includedTypes": ["dentist"],
         "maxResultCount": 20,
     }
-    if page_token:
-        body["pageToken"] = page_token
 
     resp = requests.post(
         f"{PLACES_BASE}/places:searchNearby",
@@ -89,7 +87,7 @@ def _nearby_search_page(
             "X-Goog-Api-Key": api_key,
             "X-Goog-FieldMask": (
                 "places.id,places.displayName,places.formattedAddress,"
-                "places.location,places.businessStatus,nextPageToken"
+                "places.location,places.businessStatus"
             ),
         },
         json=body,
@@ -100,29 +98,22 @@ def _nearby_search_page(
 
 def _search_one_circle(lat: float, lng: float, radius_m: float, api_key: str) -> list[dict]:
     results: list[dict] = []
-    page_token: str | None = None
 
-    for _ in range(5):
-        data = _nearby_search_page(lat, lng, radius_m, api_key, page_token)
-        if "error" in data:
-            logger.warning("Nearby Search error at (%.5f,%.5f): %s", lat, lng, data["error"])
-            break
+    data = _nearby_search_page(lat, lng, radius_m, api_key)
+    if "error" in data:
+        logger.warning("Nearby Search error at (%.5f,%.5f): %s", lat, lng, data["error"])
+        return results
 
-        for place in data.get("places", []):
-            if place.get("businessStatus") == "CLOSED_PERMANENTLY":
-                continue
-            loc = place.get("location", {})
-            results.append({
-                "place_id": place["id"],
-                "name": place.get("displayName", {}).get("text", ""),
-                "lat": loc.get("latitude"),
-                "lng": loc.get("longitude"),
-            })
-
-        page_token = data.get("nextPageToken")
-        if not page_token:
-            break
-        time.sleep(0.5)
+    for place in data.get("places", []):
+        if place.get("businessStatus") == "CLOSED_PERMANENTLY":
+            continue
+        loc = place.get("location", {})
+        results.append({
+            "place_id": place["id"],
+            "name": place.get("displayName", {}).get("text", ""),
+            "lat": loc.get("latitude"),
+            "lng": loc.get("longitude"),
+        })
 
     return results
 
