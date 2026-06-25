@@ -229,7 +229,7 @@ def _render_draw_map() -> list[list[float]] | None:
         center_lng = sum(lngs) / len(lngs)
 
     # Street (OSM) is the default base layer (show=True)
-    m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles=None, control_scale=True)
+    m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles=None)
 
     first = True
     for name, cfg in _TILE_LAYERS.items():
@@ -275,6 +275,32 @@ def _render_draw_map() -> list[list[float]] | None:
                     map.removeLayer(labelsLayer);
                 }
             });
+
+            // Add custom scale control
+            var scaleControl = L.control.scale({metric: false, imperial: true, position: 'bottomleft'});
+            scaleControl.addTo(map);
+            var scaleContainer = scaleControl.getContainer();
+            scaleContainer.style.cursor = 'grab';
+            scaleContainer.style.pointerEvents = 'auto';
+            scaleContainer.style.background = 'rgba(255,255,255,0.7)';
+            scaleContainer.style.padding = '2px 25px 2px 5px';
+            scaleContainer.style.borderRadius = '4px';
+            scaleContainer.title = 'Drag to measure distances';
+            
+            var resetBtn = document.createElement('div');
+            resetBtn.innerHTML = '↺';
+            resetBtn.title = 'Reset Scale Position';
+            resetBtn.style.cssText = 'position:absolute; right:5px; top:50%; transform:translateY(-50%); cursor:pointer; font-size:16px; color:#183e34; font-weight:bold;';
+            resetBtn.onclick = function(e) {
+                e.stopPropagation();
+                scaleContainer.style.transform = '';
+            };
+            scaleContainer.appendChild(resetBtn);
+            
+            var draggable = new L.Draggable(scaleContainer);
+            draggable.enable();
+            draggable.on('dragstart', function() { scaleContainer.style.cursor = 'grabbing'; });
+            draggable.on('dragend', function() { scaleContainer.style.cursor = 'grab'; });
         }
         function waitLeaflet() {
             if (typeof L !== 'undefined') {

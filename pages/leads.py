@@ -651,7 +651,6 @@ with st.sidebar:
         zoom_control=True,
         scrollWheelZoom=True,
         attributionControl=False,
-        control_scale=True,
     )
 
     if _map_marker:
@@ -669,6 +668,57 @@ with st.sidebar:
             fill_opacity=0.1,
             weight=1.5,
         ).add_to(_m)
+
+    _scale_js = """
+    <script>
+    (function() {
+        function initScale() {
+            var mapKey = Object.keys(window).find(function(k) {
+                return window[k] instanceof L.Map;
+            });
+            if (!mapKey) {
+                setTimeout(initScale, 100);
+                return;
+            }
+            var map = window[mapKey];
+            
+            var scaleControl = L.control.scale({metric: false, imperial: true, position: 'bottomleft'});
+            scaleControl.addTo(map);
+            var scaleContainer = scaleControl.getContainer();
+            scaleContainer.style.cursor = 'grab';
+            scaleContainer.style.pointerEvents = 'auto';
+            scaleContainer.style.background = 'rgba(255,255,255,0.7)';
+            scaleContainer.style.padding = '2px 25px 2px 5px';
+            scaleContainer.style.borderRadius = '4px';
+            scaleContainer.title = 'Drag to measure distances';
+            
+            var resetBtn = document.createElement('div');
+            resetBtn.innerHTML = '↺';
+            resetBtn.title = 'Reset Scale Position';
+            resetBtn.style.cssText = 'position:absolute; right:5px; top:50%; transform:translateY(-50%); cursor:pointer; font-size:16px; color:#183e34; font-weight:bold;';
+            resetBtn.onclick = function(e) {
+                e.stopPropagation();
+                scaleContainer.style.transform = '';
+            };
+            scaleContainer.appendChild(resetBtn);
+            
+            var draggable = new L.Draggable(scaleContainer);
+            draggable.enable();
+            draggable.on('dragstart', function() { scaleContainer.style.cursor = 'grabbing'; });
+            draggable.on('dragend', function() { scaleContainer.style.cursor = 'grab'; });
+        }
+        function waitLeaflet() {
+            if (typeof L !== 'undefined') {
+                initScale();
+            } else {
+                setTimeout(waitLeaflet, 100);
+            }
+        }
+        waitLeaflet();
+    })();
+    </script>
+    """
+    _m.get_root().html.add_child(folium.Element(_scale_js))
 
     _map_data = st_folium(
         _m,
