@@ -19,12 +19,13 @@ st.markdown(get_css(), unsafe_allow_html=True)
 _logo_bytes = Path("logo.png").read_bytes()
 _logo_b64   = base64.b64encode(_logo_bytes).decode()
 
-_how_to_page    = st.Page("pages/how_to.py",    title="How to Use",  icon=":material/help:",      default=True)
-_leads_page     = st.Page("pages/leads.py",     title="Find Leads",  icon=":material/search:")
-_api_usage_page = st.Page("pages/api_usage.py", title="API Usage",   icon=":material/bar_chart:")
-_history_page   = st.Page("pages/history.py",   title="History",     icon=":material/history:")
+_how_to_page      = st.Page("pages/how_to.py",       title="How to Use",   icon=":material/help:",        default=True)
+_leads_page       = st.Page("pages/leads.py",        title="Find Leads",   icon=":material/search:")
+_donut_page       = st.Page("pages/donut_scraper.py", title="Field Ops",    icon=":material/map:")
+_api_usage_page   = st.Page("pages/api_usage.py",    title="API Usage",    icon=":material/bar_chart:")
+_history_page     = st.Page("pages/history.py",      title="History",      icon=":material/history:")
 
-pg = st.navigation([_how_to_page, _leads_page, _api_usage_page, _history_page])
+pg = st.navigation([_how_to_page, _leads_page, _donut_page, _api_usage_page, _history_page])
 
 with st.sidebar:
     st.markdown(
@@ -40,6 +41,7 @@ with st.sidebar:
     )
     st.page_link(_how_to_page,    label="How to Use",  icon=":material/help:")
     st.page_link(_leads_page,     label="Find Leads",  icon=":material/search:")
+    st.page_link(_donut_page,     label="Field Ops",   icon=":material/map:")
     st.page_link(_api_usage_page, label="API Usage",   icon=":material/bar_chart:")
     st.page_link(_history_page,   label="History",     icon=":material/history:")
 

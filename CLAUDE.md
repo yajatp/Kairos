@@ -33,6 +33,7 @@ This is an **internal tool** used by the Kairos co-founders and early team. Ever
 ## Key session state keys
 
 - `_pipeline` — dict tracking run state (running, progress, leads_df, etc.)
+- `_donut_pipeline` — dict tracking Field Ops (Donut Scraper) run state
 - `history_target_run` — run ID to auto-expand when switching to History page
 - `history_target_lead_place_id` — place ID to scroll to in that run
 - `_leads_{run_id}` — cached leads per run (lazy-loaded in history.py)
@@ -50,8 +51,15 @@ This is an **internal tool** used by the Kairos co-founders and early team. Ever
 
 ## Google Sheets
 
+**Lead-gen sheet** (Find Leads tool)  
 Spreadsheet ID: `1UlBdK2z7UsP-_IFYhxK5IImmHCOGFKKvaGHUDw_dXHs`  
 Auto-sync runs on every pipeline completion. Use "Sync History" button in History page to backfill missed runs.
+
+**Field Ops sheet** (Donut Scraper / Area Scraper)  
+Sheet name: `Kairos Donut Scraper` — created automatically on first run by the service account.  
+Env var: `DONUT_SPREADSHEET_ID` — optional; if set, the app opens the sheet by ID instead of searching by name. Set this after the first run to avoid a name-lookup round-trip.  
+Includes a `_area_index` tab (internal bookkeeping for IoU-based same-area detection — do not manually edit this tab).  
+Same `GOOGLE_SERVICE_ACCOUNT_JSON` service account as the lead-gen sheet — no new credentials needed.
 
 ## API cost constants — update these when pricing or accounts change
 
@@ -74,7 +82,7 @@ The app estimates Outscraper cost from reviews tracked in Supabase (reviews × $
 
 When Kairos switches from Yajat's personal API accounts to company accounts, do ALL of the following:
 
-1. **Streamlit Cloud secrets** — replace `GOOGLE_PLACES_API_KEY`, `OUTSCRAPER_API_KEY`, `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` with company credentials.
+1. **Streamlit Cloud secrets** — replace `GOOGLE_PLACES_API_KEY`, `OUTSCRAPER_API_KEY`, `ADZUNA_APP_ID`, `ADZUNA_APP_KEY`, `SUPABASE_URL`, `SUPABASE_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, `GEMINI_API_KEY` with company credentials. Also update `DONUT_SPREADSHEET_ID` if the Field Ops sheet is migrated to a company-owned Google Sheets file.
 2. **Reset Outscraper usage tracking** — run `UPDATE runs SET outscraper_reviews = 0` or clear the local `api_usage.json` so the monthly counter starts fresh. The old balance belongs to the personal account.
 3. **Update pricing constants** — if the company Outscraper plan has a different per-review rate, update `OUTSCRAPER_REVIEW_COST` in `utils/usage_tracker.py`. Same for Google if rates change.
 4. **Reset `OUTSCRAPER_MONTHLY_LIMIT`** — update the cap in `utils/usage_tracker.py` to match the company plan.
