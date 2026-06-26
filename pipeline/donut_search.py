@@ -15,6 +15,23 @@ _SEARCH_RADIUS_M = 1000.0
 _SPACING_FACTOR = 1.2
 CIRCLE_WARNING_THRESHOLD = 200
 
+BUFFER_FLOOR_MI = 0.2
+BUFFER_CAP_MI = 0.5
+_BUFFER_SCALE_K = 0.08
+
+
+def adaptive_buffer_miles(area_sqmi: float) -> float:
+    """Suggested buffer (mi) to catch clinics just outside a drawn area.
+
+    Edge/hand-draw uncertainty is roughly fixed, so we floor at 0.2 mi even for
+    tiny areas. Larger areas are drawn more coarsely, so we add a mild
+    sqrt(area) term — k=0.08 expands a square's area by ~30% (vs. the old
+    0.2 coefficient which nearly doubled it). Capped at 0.5 mi: past a short
+    drive a clinic is no longer "just outside" the target.
+    """
+    raw = max(BUFFER_FLOOR_MI, _BUFFER_SCALE_K * math.sqrt(max(area_sqmi, 0.0)))
+    return round(min(BUFFER_CAP_MI, raw), 1)
+
 
 def _meters_to_lat_deg(meters: float) -> float:
     return meters / 111320.0
@@ -32,8 +49,24 @@ def compute_bounding_box(coords: list[list[float]]) -> tuple[float, float, float
     return min(lats), max(lats), min(lngs), max(lngs)
 
 
-def estimate_circle_count(coords: list[list[float]], radius_m: float = _SEARCH_RADIUS_M) -> int:
+def _expand_bbox(
+    min_lat: float, max_lat: float, min_lng: float, max_lng: float, buffer_miles: float,
+) -> tuple[float, float, float, float]:
+    """Grow the bounding box by buffer_miles on every side so the grid actually
+    searches the buffer zone (filter_by_polygon keeps clinics within this margin)."""
+    if buffer_miles <= 0:
+        return min_lat, max_lat, min_lng, max_lng
+    dlat = buffer_miles / 69.0
+    center_lat = (min_lat + max_lat) / 2.0
+    dlng = buffer_miles / (69.0 * max(math.cos(math.radians(center_lat)), 1e-9))
+    return min_lat - dlat, max_lat + dlat, min_lng - dlng, max_lng + dlng
+
+
+def estimate_circle_count(
+    coords: list[list[float]], radius_m: float = _SEARCH_RADIUS_M, buffer_miles: float = 0.0,
+) -> int:
     min_lat, max_lat, min_lng, max_lng = compute_bounding_box(coords)
+    min_lat, max_lat, min_lng, max_lng = _expand_bbox(min_lat, max_lat, min_lng, max_lng, buffer_miles)
     spacing_m = radius_m * _SPACING_FACTOR
     center_lat = (min_lat + max_lat) / 2.0
     lat_span_m = (max_lat - min_lat) * 111320.0
@@ -264,16 +297,18 @@ def run_grid_search(
     polygon_coords: list[list[float]],
     api_key: str,
     radius_m: float = _SEARCH_RADIUS_M,
+    buffer_miles: float = 0.0,
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> list[dict]:
     """
-    Tile the polygon bounding box with overlapping circles, run Nearby Search for each,
-    deduplicate by Place ID, fetch Place Details for each unique result. Returns raw
-    (un-filtered) clinic list; call filter_by_polygon afterward.
+    Tile the polygon bounding box (expanded by buffer_miles) with overlapping circles,
+    run Nearby Search for each, deduplicate by Place ID, fetch Place Details for each
+    unique result. Returns raw (un-filtered) clinic list; call filter_by_polygon afterward.
 
     progress_cb(message, fraction_0_to_1)
     """
     min_lat, max_lat, min_lng, max_lng = compute_bounding_box(polygon_coords)
+    min_lat, max_lat, min_lng, max_lng = _expand_bbox(min_lat, max_lat, min_lng, max_lng, buffer_miles)
     centers = _tile_bounding_box(min_lat, max_lat, min_lng, max_lng, radius_m)
     total_centers = len(centers)
 

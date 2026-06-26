@@ -27,6 +27,7 @@ class _ImperialScale(MacroElement):
 
 from pipeline.donut_search import (
     CIRCLE_WARNING_THRESHOLD,
+    adaptive_buffer_miles,
     estimate_circle_count,
     filter_by_polygon,
     run_grid_search,
@@ -35,7 +36,6 @@ from pipeline.donut_search import (
     compute_buffered_outline,
 )
 from pipeline.places import reverse_geocode
-import math
 from pipeline.donut_enrichment import enrich_clinic
 from utils.donut_sheets import write_run_to_sheet
 from utils.usage_tracker import GOOGLE_SEARCH_COST
@@ -96,6 +96,7 @@ def _run_pipeline(
         raw_clinics = run_grid_search(
             polygon_coords,
             api_key,
+            buffer_miles=buffer_miles,
             progress_cb=progress,
         )
 
@@ -176,8 +177,8 @@ _SIDEBAR_CSS = """
 """
 
 
-def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
-    """Render sidebar controls. Returns (buffer_miles, area_name, run_clicked, estimate_clicked)."""
+def _render_sidebar_controls() -> tuple[float, str, bool, bool, bool]:
+    """Render sidebar controls. Returns (buffer_miles, area_name, use_gemini, run_clicked, estimate_clicked)."""
     if "buffer_slider" not in st.session_state:
         st.session_state.buffer_slider = 0.5
 
@@ -187,6 +188,13 @@ def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
     if pending is not None:
         st.session_state.buffer_slider = pending
         st.session_state._donut_pipeline["pending_auto_buffer"] = None
+
+    st.markdown("<div class='ds-section-label'>Area Label (optional)</div>", unsafe_allow_html=True)
+    area_name = st.text_input(
+        "Short name for this area",
+        placeholder="e.g. Prosper test zone",
+        label_visibility="collapsed",
+    )
 
     st.markdown("<div class='ds-section-label'>Buffer Distance</div>", unsafe_allow_html=True)
     buffer_miles = st.number_input(
@@ -200,12 +208,26 @@ def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
     )
     st.caption(f"{buffer_miles:.1f} mi buffer around drawn polygon")
 
-    st.markdown("<div class='ds-section-label'>Area Label (optional)</div>", unsafe_allow_html=True)
-    area_name = st.text_input(
-        "Short name for this area",
-        placeholder="e.g. Prosper test zone",
-        label_visibility="collapsed",
-    )
+    st.markdown("<div class='ds-section-label'>AI Extraction</div>", unsafe_allow_html=True)
+    if _get_secret("GEMINI_API_KEY"):
+        use_gemini = st.toggle(
+            "Gemini deep extraction",
+            value=True,
+            key="ds_use_gemini",
+            help=(
+                "On: Gemini reads each clinic website to pull the head dentist and any "
+                "extra email. Off: faster quick run with no Gemini cost — keeps Google "
+                "Places name/phone plus regex email and dentist only."
+            ),
+        )
+        st.caption(
+            "Gemini deep extraction on"
+            if use_gemini
+            else "Quick run — Places + regex only, no Gemini"
+        )
+    else:
+        use_gemini = False
+        st.caption("No GEMINI_API_KEY — regex-only extraction")
 
     st.markdown("<hr style='margin: 12px 0;'>", unsafe_allow_html=True)
 
@@ -223,7 +245,7 @@ def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
         use_container_width=True,
     )
 
-    return buffer_miles, area_name, run_clicked, estimate_clicked
+    return buffer_miles, area_name, use_gemini, run_clicked, estimate_clicked
 
 
 _TILE_LAYERS = {
@@ -465,13 +487,7 @@ st.markdown(
 
 # Sidebar controls
 with st.sidebar:
-    buffer_miles, area_name, run_clicked, estimate_clicked = _render_sidebar_controls()
-
-    gemini_key = _get_secret("GEMINI_API_KEY")
-    if gemini_key:
-        st.caption(":material/psychology: Gemini enabled — AI extraction active")
-    else:
-        st.caption(":material/psychology_alt: No GEMINI_API_KEY — regex-only extraction")
+    buffer_miles, area_name, use_gemini, run_clicked, estimate_clicked = _render_sidebar_controls()
 
 if p["running"]:
     st.info("Map is locked while the scraper is running.")
@@ -488,7 +504,7 @@ else:
             api_key = _get_secret("GOOGLE_PLACES_API_KEY")
             city_state = reverse_geocode(lat, lng, api_key) if api_key else "Unknown Location"
 
-            auto_buf = round(max(0.1, min(5.0, math.sqrt(area) * 0.2)), 1)
+            auto_buf = adaptive_buffer_miles(area)
 
             p["area_sqmi"] = area
             p["city_state"] = city_state
@@ -504,7 +520,7 @@ if polygon_coords and not p["running"]:
     area = p.get("area_sqmi", 0.0)
     city = p.get("city_state", "Unknown Location")
     auto_buf = p.get("auto_buffer_miles", 0.5)
-    n_queries = estimate_circle_count(polygon_coords)
+    n_queries = estimate_circle_count(polygon_coords, buffer_miles=buffer_miles)
     est_cost = n_queries * GOOGLE_SEARCH_COST
     over_limit = n_queries > CIRCLE_WARNING_THRESHOLD
     q_color = "#b91c1c" if over_limit else "#183e34"
@@ -550,7 +566,7 @@ if estimate_clicked:
     if not polygon_coords:
         st.warning("Draw a polygon first.")
     else:
-        n = estimate_circle_count(polygon_coords)
+        n = estimate_circle_count(polygon_coords, buffer_miles=buffer_miles)
         if n > CIRCLE_WARNING_THRESHOLD:
             st.warning(
                 f"This area requires **{n} grid queries** — larger than the recommended limit "
@@ -562,6 +578,7 @@ if estimate_clicked:
 # Run button
 if run_clicked:
     api_key = _get_secret("GOOGLE_PLACES_API_KEY")
+    gemini_key = _get_secret("GEMINI_API_KEY") if use_gemini else ""
 
     if not polygon_coords:
         st.error("Draw a polygon on the map before running.")
