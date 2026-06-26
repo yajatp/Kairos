@@ -207,7 +207,7 @@ def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
 
     col1, col2 = st.columns(2)
     estimate_clicked = col1.button(
-        ":material/calculate: Estimate",
+        "Estimate",
         use_container_width=True,
         help="Estimate API call count before running",
     )
