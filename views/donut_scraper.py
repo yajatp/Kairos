@@ -489,7 +489,6 @@ st.markdown(
 
 # Sidebar controls
 with st.sidebar:
-    st.markdown("<div class='ds-section-label'>Run Controls</div>", unsafe_allow_html=True)
     buffer_miles, area_name, run_clicked, estimate_clicked = _render_sidebar_controls()
 
     gemini_key = _get_secret("GEMINI_API_KEY")
