@@ -273,8 +273,12 @@ def write_run_to_sheet(
                 new_base = f"{primary} (auto)"
                 new_tab_name = _unique_tab_name(ss, new_base)
                 try:
-                    ws = ss.worksheet(tab_name)
-                    ws.update_title(new_tab_name)
+                    try:
+                        ws = ss.worksheet(tab_name)
+                        ws.update_title(new_tab_name)
+                    except Exception:
+                        pass # Tab might have been manually deleted from sheets
+                    
                     # Update the area index to replace the old name so it doesn't get orphaned
                     try:
                         idx_ws = ss.worksheet(_AREA_INDEX_TAB)
