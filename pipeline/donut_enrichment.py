@@ -215,26 +215,74 @@ def _confidence_rank(confidence: str) -> int:
     return {"high": 0, "medium": 1, "low": 2}.get(confidence.lower(), 3)
 
 
+def _merge_dentists(clinic: dict, new_dentist_str: str, source: str) -> None:
+    if not new_dentist_str:
+        return
+        
+    existing = clinic.get("head_dentist", "")
+    existing_src = clinic.get("staff_source", "")
+    
+    if not existing:
+        clinic["head_dentist"] = new_dentist_str
+        clinic["staff_source"] = source
+        return
+        
+    # Deduplicate
+    existing_parts = [p.strip() for p in existing.split(";") if p.strip()]
+    new_parts = [p.strip() for p in new_dentist_str.split(";") if p.strip()]
+    
+    def _norm(n: str) -> str:
+        s = re.sub(r"^dr\.?\s+", "", n, flags=re.IGNORECASE)
+        s = re.sub(r",?\s*(?:DDS|DMD|MD|DO|PhD|MS|FAGD|FICD|FACD|DABP|FACS)\b", "", s, flags=re.IGNORECASE)
+        s = re.sub(r"\b[A-Z]\.", "", s)
+        s = re.sub(r"\s+\([^)]+\)", "", s) # remove appended roles like (Dentist)
+        return re.sub(r"\s+", " ", s).strip().lower()
+        
+    seen = {_norm(p) for p in existing_parts}
+    added = False
+    for p in new_parts:
+        if _norm(p) not in seen:
+            existing_parts.append(p)
+            seen.add(_norm(p))
+            added = True
+            
+    if added:
+        clinic["head_dentist"] = "; ".join(existing_parts)
+        if existing_src and existing_src != "Not Found":
+            clinic["staff_source"] = f"{existing_src} + {source}"
+        else:
+            clinic["staff_source"] = source
+    else:
+        # confirmed by the new source
+        if "Confirmed" not in existing_src:
+            clinic["staff_source"] = f"{existing_src} (Confirmed by {source})"
+
+
 def _extract_independent(clinic: dict, text: str, gemini_key: str) -> None:
     regex_result = _extract_dentist_regex(text)
-
-    if regex_result["name"]:
-        clinic["head_dentist"] = (
-            f"{regex_result['name']}, {regex_result['credential']}"
-            if regex_result["credential"]
-            else regex_result["name"]
-        )
-        clinic["staff_source"] = "Regex"
-        return
+    existing = clinic.get("head_dentist", "")
 
     if not gemini_key:
-        clinic["head_dentist"] = ""
-        clinic["staff_source"] = "Not Found"
+        if regex_result["name"]:
+            new_doc = (
+                f"{regex_result['name']}, {regex_result['credential']}"
+                if regex_result["credential"]
+                else regex_result["name"]
+            )
+            _merge_dentists(clinic, new_doc, "Regex")
+        elif not existing:
+            clinic["head_dentist"] = ""
+            clinic["staff_source"] = "Not Found"
         return
 
     prompt = (
         "You are analyzing dental practice website text to identify the head/owner dentist "
         "and contact email. Return null for any field you cannot find with confidence.\n\n"
+    )
+    if existing:
+        prompt += f"Note: We already identified '{existing}' from business listings. Confirm this or add missing credentials, and find any other primary dentists.\n\n"
+
+    prompt += (
         "Text (truncated to 4000 chars):\n"
         f"{text[:4000]}\n\n"
         "Return the head dentist (owner or primary dentist, not an associate), their credential, "
@@ -249,9 +297,9 @@ def _extract_independent(clinic: dict, text: str, gemini_key: str) -> None:
         confidence = dentist.get("confidence", "low")
 
         if name:
-            clinic["head_dentist"] = f"{name}, {cred}".rstrip(", ") if cred else name
-            clinic["staff_source"] = f"Gemini ({confidence} confidence)"
-        else:
+            new_doc = f"{name}, {cred}".rstrip(", ") if cred else name
+            _merge_dentists(clinic, new_doc, f"Gemini ({confidence})")
+        elif not existing:
             clinic["head_dentist"] = ""
             clinic["staff_source"] = "Not Found"
 
@@ -260,17 +308,20 @@ def _extract_independent(clinic: dict, text: str, gemini_key: str) -> None:
             addr = email_info.get("address") or ""
             if addr and "@" in addr and not any(n in addr.lower() for n in _EMAIL_NOISE):
                 clinic["email"] = addr.lower()
-                clinic["email_source"] = f"Gemini ({email_info.get('confidence', 'low')} confidence)"
+                clinic["email_source"] = f"Gemini ({email_info.get('confidence', 'low')})"
     except Exception as e:
         logger.warning("Gemini extraction failed for %s: %s", clinic.get("name"), e)
-        clinic["head_dentist"] = ""
-        clinic["staff_source"] = "Not Found"
+        if not existing:
+            clinic["head_dentist"] = ""
+            clinic["staff_source"] = "Not Found"
 
 
 def _extract_dso(clinic: dict, text: str, gemini_key: str) -> None:
+    existing = clinic.get("head_dentist", "")
     if not gemini_key:
-        clinic["head_dentist"] = ""
-        clinic["staff_source"] = "Not Found"
+        if not existing:
+            clinic["head_dentist"] = ""
+            clinic["staff_source"] = "Not Found"
         return
 
     prompt = (
@@ -278,6 +329,11 @@ def _extract_dso(clinic: dict, text: str, gemini_key: str) -> None:
         "Extract every named staff member found — dentists, office manager, etc. "
         "Focus on people plausibly present at this physical location. "
         "Exclude regional/corporate titles (Regional VP, District Manager, etc.).\n\n"
+    )
+    if existing:
+        prompt += f"Note: We already identified '{existing}' from business listings. Confirm this and find any others.\n\n"
+        
+    prompt += (
         "Text (truncated to 4000 chars):\n"
         f"{text[:4000]}\n\n"
         "For each person: name, role, is_location_specific (true/false), confidence (high/medium/low). "
@@ -289,8 +345,9 @@ def _extract_dso(clinic: dict, text: str, gemini_key: str) -> None:
         staff = result.get("staff", [])
 
         if not staff:
-            clinic["head_dentist"] = ""
-            clinic["staff_source"] = "Not Found"
+            if not existing:
+                clinic["head_dentist"] = ""
+                clinic["staff_source"] = "Not Found"
             return
 
         # Filter to location-specific, sort by role seniority then confidence
@@ -315,19 +372,24 @@ def _extract_dso(clinic: dict, text: str, gemini_key: str) -> None:
             for s in surfaced
             if s.get("name")
         ]
-        clinic["head_dentist"] = "; ".join(parts)
-        clinic["staff_source"] = "Gemini"
+        
+        if parts:
+            _merge_dentists(clinic, "; ".join(parts), "Gemini")
+        elif not existing:
+            clinic["head_dentist"] = ""
+            clinic["staff_source"] = "Not Found"
 
         if not clinic.get("email"):
             email_info = result.get("email", {})
             addr = email_info.get("address") or ""
             if addr and "@" in addr and not any(n in addr.lower() for n in _EMAIL_NOISE):
                 clinic["email"] = addr.lower()
-                clinic["email_source"] = f"Gemini ({email_info.get('confidence', 'low')} confidence)"
+                clinic["email_source"] = f"Gemini ({email_info.get('confidence', 'low')})"
     except Exception as e:
         logger.warning("Gemini DSO extraction failed for %s: %s", clinic.get("name"), e)
-        clinic["head_dentist"] = ""
-        clinic["staff_source"] = "Not Found"
+        if not existing:
+            clinic["head_dentist"] = ""
+            clinic["staff_source"] = "Not Found"
 
 
 def enrich_clinic(clinic: dict, gemini_key: str = "") -> dict:
@@ -343,8 +405,9 @@ def enrich_clinic(clinic: dict, gemini_key: str = "") -> dict:
     if not website:
         clinic.setdefault("email", "")
         clinic.setdefault("email_source", "Not Found")
-        clinic.setdefault("head_dentist", "")
-        clinic.setdefault("staff_source", "Not Found")
+        if not clinic.get("head_dentist"):
+            clinic.setdefault("head_dentist", "")
+            clinic.setdefault("staff_source", "Not Found")
         clinic["notes"] = "No website found – manual lookup needed."
         return clinic
 
@@ -355,8 +418,9 @@ def enrich_clinic(clinic: dict, gemini_key: str = "") -> dict:
     clinic["notes"] = ""
 
     if not all_text:
-        clinic["head_dentist"] = ""
-        clinic["staff_source"] = "Not Found"
+        if not clinic.get("head_dentist"):
+            clinic["head_dentist"] = ""
+            clinic["staff_source"] = "Not Found"
         return clinic
 
     if not is_dso:

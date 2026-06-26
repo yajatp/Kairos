@@ -3,9 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+from collections import Counter
 from datetime import date
 
 logger = logging.getLogger(__name__)
+
+_STATE_ZIP_RE = re.compile(r"^([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?)?$")
+_SECOND_CITY_MIN_SHARE = 0.30
 
 DONUT_SHEET_NAME = "Kairos Donut Scraper"
 _AREA_INDEX_TAB = "_area_index"
@@ -118,6 +123,68 @@ def _find_matching_area(area_index: list[dict], polygon_coords: list[list[float]
     return None
 
 
+def _parse_city_state(address: str) -> tuple[str, str] | None:
+    """Pull (city, state) out of a Google formatted address, or None."""
+    if not address:
+        return None
+        
+    # Match standard format: "... Allen, TX 75013..."
+    m = re.search(r",\s*([^,]+?),\s*([A-Z]{2})\s*\d{5}", address)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+        
+    # Match format without zip: "... Allen, TX, USA"
+    m = re.search(r",\s*([^,]+?),\s*([A-Z]{2})(?:,\s*USA)?$", address)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+
+    # Fallback to part iteration
+    parts = [p.strip() for p in address.split(",") if p.strip()]
+    for i, part in enumerate(parts):
+        m = _STATE_ZIP_RE.match(part)
+        if m and i > 0:
+            return parts[i - 1], m.group(1)
+    return None
+
+
+def _derive_primary_location(clinics: list[dict]) -> str:
+    """Name the run after where its clinics actually are.
+
+    Returns "City, ST", or "City1 & City2, ST" when a second city holds a
+    meaningful share (the donut straddles a line). "" if nothing parseable.
+    """
+    counts: Counter[tuple[str, str]] = Counter()
+    for c in clinics:
+        cs = _parse_city_state(c.get("address", ""))
+        if cs:
+            counts[cs] += 1
+    if not counts:
+        return ""
+
+    total = sum(counts.values())
+    ranked = counts.most_common(2)
+    (top_city, top_state), _ = ranked[0]
+
+    if len(ranked) > 1:
+        (c2_city, c2_state), c2_n = ranked[1]
+        if c2_n / total >= _SECOND_CITY_MIN_SHARE:
+            if c2_state == top_state:
+                return f"{top_city} & {c2_city}, {top_state}"
+            return f"{top_city}, {top_state} & {c2_city}, {c2_state}"
+    return f"{top_city}, {top_state}"
+
+
+def _unique_tab_name(ss, base: str) -> str:
+    """Return base (<=50 chars), suffixing ` 2`, ` 3`... if the tab exists."""
+    existing = {w.title for w in ss.worksheets()}
+    if base[:50] not in existing:
+        return base[:50]
+    n = 2
+    while f"{base} {n}"[:50] in existing:
+        n += 1
+    return f"{base} {n}"[:50]
+
+
 def _build_output_rows(
     clinics: list[dict], tab_name: str, run_date: str,
 ) -> list[list]:
@@ -199,11 +266,28 @@ def write_run_to_sheet(
     match = _find_matching_area(area_index, polygon_coords)
     if match:
         tab_name = match["tab_name"]
+        # Upgrade coordinate-based tab names (e.g. "2026-06-25 (33.11, -96.67) (auto)")
+        if " (auto)" in tab_name and re.search(r"\(\s*-?\d+\.\d+,\s*-?\d+\.\d+\s*\)", tab_name):
+            primary = _derive_primary_location(clinics)
+            if primary:
+                new_base = f"{primary} (auto)"
+                new_tab_name = _unique_tab_name(ss, new_base)
+                try:
+                    ws = ss.worksheet(tab_name)
+                    ws.update_title(new_tab_name)
+                    tab_name = new_tab_name
+                    logger.info("Upgraded coordinate tab to %s", tab_name)
+                except Exception as e:
+                    logger.warning("Failed to rename tab: %s", e)
+    elif area_name and area_name.strip():
+        tab_name = area_name.strip()[:50]
     else:
-        if area_name and area_name.strip():
-            tab_name = area_name.strip()[:50]
+        primary = _derive_primary_location(clinics)
+        if primary:
+            base = f"{primary} (auto)"
         else:
-            tab_name = f"{run_date} ({centroid_lat:.2f}, {centroid_lng:.2f})"
+            base = f"{run_date} ({centroid_lat:.2f}, {centroid_lng:.2f}) (auto)"
+        tab_name = _unique_tab_name(ss, base)
 
     rows = _build_output_rows(clinics, tab_name, run_date)
 

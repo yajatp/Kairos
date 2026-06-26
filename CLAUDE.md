@@ -76,7 +76,7 @@ Auto-sync runs on every pipeline completion. Use "Sync History" button in Histor
 
 **Field Ops sheet** (Donut Scraper / Area Scraper)  
 Sheet name: `Kairos Donut Scraper` — created automatically on first run by the service account.  
-Env var: `DONUT_SPREADSHEET_ID` — optional; if set, the app opens the sheet by ID instead of searching by name. Set this after the first run to avoid a name-lookup round-trip.  
+Env var: `DONUT_SPREADSHEET_ID` — set to `1eEpIsP6zVoshFOayOr3sY_KybBAzc16K1RuNPMVfnd4` (in Streamlit Cloud secrets as of Jun 26, 2026). This makes the app open the sheet by ID via `open_by_key` (Sheets API only) instead of searching/creating by name via the Drive API. **Required** here because the Drive API is disabled on the service-account project (`kairos-499823`); without this ID set you get a 403 "Google Drive API has not been used" on every write. Service account `kairos-sheets@kairos-499823.iam.gserviceaccount.com` must have Editor access on the sheet.  
 Includes a `_area_index` tab (internal bookkeeping for IoU-based same-area detection — do not manually edit this tab).  
 Same `GOOGLE_SERVICE_ACCOUNT_JSON` service account as the lead-gen sheet — no new credentials needed.
 

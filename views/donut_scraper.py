@@ -103,6 +103,10 @@ def _run_pipeline(
         progress(f"Filtering {len(raw_clinics)} clinics by polygon + buffer...", 90)
         clinics = filter_by_polygon(raw_clinics, polygon_coords, buffer_miles)
 
+        progress("Deduplicating clinics and extracting doctor names...", 91)
+        from pipeline.dedup import deduplicate_clinics
+        clinics = deduplicate_clinics(clinics)
+
         progress(f"Enriching {len(clinics)} clinics (email + dentist extraction)...", 92)
         for i, clinic in enumerate(clinics):
             progress(
@@ -169,16 +173,16 @@ _SIDEBAR_CSS = """
     letter-spacing: 0.06em; color: #6b6f76; margin-top: 2px; }
 .zone-core { color: #183e34; font-weight: 600; }
 .zone-buffer { color: #6b6f76; }
-.st-key-ds_estimate_btn, .st-key-ds_run_btn { display: flex; }
-.st-key-ds_estimate_btn button, .st-key-ds_run_btn button {
+.st-key-ds_run_btn { display: flex; }
+.st-key-ds_run_btn button {
     height: 42px; min-height: 42px; width: 100%;
 }
 </style>
 """
 
 
-def _render_sidebar_controls() -> tuple[float, str, bool, bool, bool]:
-    """Render sidebar controls. Returns (buffer_miles, area_name, use_gemini, run_clicked, estimate_clicked)."""
+def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
+    """Render sidebar controls. Returns (buffer_miles, area_name, use_gemini, run_clicked)."""
     if "buffer_slider" not in st.session_state:
         st.session_state.buffer_slider = 0.5
 
@@ -234,21 +238,14 @@ def _render_sidebar_controls() -> tuple[float, str, bool, bool, bool]:
 
     st.markdown("<hr style='margin: 12px 0;'>", unsafe_allow_html=True)
 
-    col1, col2 = st.columns(2)
-    estimate_clicked = col1.button(
-        "Estimate",
-        key="ds_estimate_btn",
-        use_container_width=True,
-        help="Estimate API call count before running",
-    )
-    run_clicked = col2.button(
+    run_clicked = st.button(
         ":material/play_arrow: Run",
         key="ds_run_btn",
         type="primary",
         use_container_width=True,
     )
 
-    return buffer_miles, area_name, use_gemini, run_clicked, estimate_clicked
+    return buffer_miles, area_name, use_gemini, run_clicked
 
 
 _TILE_LAYERS = {
@@ -536,7 +533,7 @@ st.markdown(
 
 # Sidebar controls
 with st.sidebar:
-    buffer_miles, area_name, use_gemini, run_clicked, estimate_clicked = _render_sidebar_controls()
+    buffer_miles, area_name, use_gemini, run_clicked = _render_sidebar_controls()
 
 if p["running"]:
     st.info("Map is locked while the scraper is running.")
@@ -621,36 +618,26 @@ if polygon_coords and not p["running"]:
     else:
         buffer_display = f"{buffer_miles:.1f} mi" + _tag.format(f"(auto {auto_buf:.1f})")
 
+    queries_display = f"{n_queries}"
+    if over_limit:
+        queries_display += _tag.format("(over 200 limit)")
+
     st.markdown(
         "<div style='background:#f7f7f8; border:1px solid #ededed; border-radius:8px; padding:16px; "
         "margin-top:16px; display:flex; gap:16px; flex-wrap:wrap;'>"
         + _stat("Encompassed Area", f"{area:.1f} sq mi")
         + _stat("Primary Location", city)
         + _stat("Buffer", buffer_display)
-        + _stat("Grid Queries", f"{n_queries}", q_color)
+        + _stat("Grid Queries", queries_display, q_color)
         + _stat("Est. Search Cost", f"${est_cost:.2f}", q_color)
         + "</div>",
         unsafe_allow_html=True,
     )
-    if over_limit:
-        st.warning(
-            f":material/warning: {n_queries} grid queries exceeds the recommended "
-            f"{CIRCLE_WARNING_THRESHOLD}. Consider a smaller area before running."
-        )
-
-# Estimate button
-if estimate_clicked:
-    if not polygon_coords:
-        st.warning("Draw a polygon first.")
-    else:
-        n = estimate_circle_count(polygon_coords, buffer_miles=buffer_miles)
-        if n > CIRCLE_WARNING_THRESHOLD:
+        if over_limit:
             st.warning(
-                f"This area requires **{n} grid queries** — larger than the recommended limit "
-                f"({CIRCLE_WARNING_THRESHOLD}). Consider drawing a smaller area."
+                f":material/warning: {n_queries} grid queries exceeds the recommended "
+                f"{CIRCLE_WARNING_THRESHOLD}. Consider a smaller area before running."
             )
-        else:
-            st.info(f"Estimated **{n} grid queries** — looks reasonable.")
 
 # Run button
 if run_clicked:
