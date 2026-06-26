@@ -206,7 +206,10 @@ def _render_sidebar_controls() -> tuple[float, str, bool, bool, bool]:
         key="buffer_slider",
         label_visibility="collapsed",
     )
-    st.caption(f"{buffer_miles:.1f} mi buffer around drawn polygon")
+    if buffer_miles <= 0:
+        st.caption("Buffer off — only clinics inside the drawn polygon")
+    else:
+        st.caption(f"{buffer_miles:.1f} mi buffer around drawn polygon")
 
     st.markdown("<div class='ds-section-label'>AI Extraction</div>", unsafe_allow_html=True)
     if _get_secret("GEMINI_API_KEY"):
@@ -610,12 +613,20 @@ if polygon_coords and not p["running"]:
             "</div>"
         )
 
+    _tag = "<span style='font-size:11px; font-weight:500; color:#6b6f76;'> {}</span>"
+    if buffer_miles <= 0:
+        buffer_display = "<span style='color:#6b6f76;'>Off</span>"
+    elif abs(buffer_miles - auto_buf) <= 0.01:
+        buffer_display = f"{buffer_miles:.1f} mi" + _tag.format("auto")
+    else:
+        buffer_display = f"{buffer_miles:.1f} mi"
+
     st.markdown(
         "<div style='background:#f7f7f8; border:1px solid #ededed; border-radius:8px; padding:16px; "
         "margin-top:16px; display:flex; gap:16px; flex-wrap:wrap;'>"
         + _stat("Encompassed Area", f"{area:.1f} sq mi")
         + _stat("Primary Location", city)
-        + _stat("Buffer (active)", f"{buffer_miles:.1f} mi")
+        + _stat("Buffer", buffer_display)
         + _stat("Grid Queries", f"{n_queries}", q_color)
         + _stat("Est. Search Cost", f"${est_cost:.2f}", q_color)
         + "</div>",
@@ -625,17 +636,6 @@ if polygon_coords and not p["running"]:
         st.warning(
             f":material/warning: {n_queries} grid queries exceeds the recommended "
             f"{CIRCLE_WARNING_THRESHOLD}. Consider a smaller area before running."
-        )
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    if abs(buffer_miles - auto_buf) > 0.01:
-        st.caption(
-            f"Adaptive buffer suggested **{auto_buf:.1f} mi** for this area "
-            f"(you set {buffer_miles:.1f} mi). The teal dashed ring on the map is the active buffer."
-        )
-    else:
-        st.caption(
-            f"Buffer auto-set to **{auto_buf:.1f} mi** based on area size — override it in the sidebar. "
-            "The teal dashed ring on the map shows the active buffer."
         )
 
 # Estimate button
