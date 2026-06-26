@@ -35,7 +35,7 @@ from pipeline.donut_search import (
     compute_polygon_centroid,
     compute_buffered_outline,
 )
-from pipeline.places import reverse_geocode
+from pipeline.places import geocode, reverse_geocode
 from pipeline.donut_enrichment import enrich_clinic
 from utils.donut_sheets import write_run_to_sheet
 from utils.usage_tracker import GOOGLE_SEARCH_COST
@@ -269,6 +269,16 @@ def _clear_polygon_state(p: dict) -> None:
     p["auto_buffer_miles"] = 0.5
 
 
+@st.cache_data(show_spinner=False)
+def _geocode_for_map(location_str: str, api_key: str):
+    """Cached (lat, lng, label) for the area search box, or None on failure."""
+    try:
+        lat, lng, label = geocode(location_str, api_key)
+        return lat, lng, label
+    except Exception:
+        return None
+
+
 def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
     """Render the Folium draw map. Returns polygon coords [[lng, lat], ...] or None."""
     p = st.session_state._donut_pipeline
@@ -277,12 +287,26 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
     center_lng = -96.7970
     zoom = 11
 
+    # Type-to-search recenter target (the box rendered under the map). Reading the
+    # widget value here is safe — it persists in session_state across the rerun.
+    search_q = st.session_state.get("ds_area_search", "")
+    search_center = None
+    if search_q and len(search_q) >= 3:
+        api_key = _get_secret("GOOGLE_PLACES_API_KEY")
+        if api_key:
+            geo = _geocode_for_map(search_q, api_key)
+            if geo:
+                search_center = (geo[0], geo[1])
+
     if p.get("polygon_coords"):
         coords = p["polygon_coords"]
         lats = [c[1] for c in coords]
         lngs = [c[0] for c in coords]
         center_lat = sum(lats) / len(lats)
         center_lng = sum(lngs) / len(lngs)
+    elif search_center:
+        center_lat, center_lng = search_center
+        zoom = 12
 
     # Street (OSM) is the default base layer (show=True)
     m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles=None)
@@ -357,10 +381,21 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
 
     # Nonce in the key lets the Clear button reset st_folium so a stale
     # last_active_drawing can't repopulate the polygon after deletion.
+    # Pass center/zoom only when the search result actually changed, so the map
+    # jumps once per new search instead of snapping back while the user pans/draws.
+    st_kwargs: dict = {}
+    if not search_q:
+        p["applied_search_center"] = None
+    elif search_center and search_center != p.get("applied_search_center"):
+        st_kwargs["center"] = search_center
+        st_kwargs["zoom"] = 12
+        p["applied_search_center"] = search_center
+
     result = st_folium(
         m, width="100%", height=440,
         key=f"donut_draw_map_{p.get('map_nonce', 0)}",
         returned_objects=["last_active_drawing"],
+        **st_kwargs,
     )
 
     polygon_coords = None
@@ -507,6 +542,22 @@ if p["running"]:
 else:
     st.markdown("**Draw your target area** — polygon only, one shape at a time")
     new_polygon_coords = _render_draw_map(buffer_miles)
+
+    st.text_input(
+        "Search area",
+        key="ds_area_search",
+        placeholder="Jump to a city or ZIP — e.g. Plano, TX or 75024",
+        label_visibility="collapsed",
+    )
+    _sq = st.session_state.get("ds_area_search", "")
+    if _sq and len(_sq) >= 3:
+        _api_key = _get_secret("GOOGLE_PLACES_API_KEY")
+        _geo = _geocode_for_map(_sq, _api_key) if _api_key else None
+        if _geo:
+            st.caption(f":material/location_on: Centered on {_geo[2]} — draw your polygon here")
+        else:
+            st.caption("Location not found — try a city, state, or ZIP code.")
+
     if new_polygon_coords:
         p["polygon_coords"] = new_polygon_coords
 
