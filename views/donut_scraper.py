@@ -168,6 +168,10 @@ _SIDEBAR_CSS = """
     letter-spacing: 0.06em; color: #6b6f76; margin-top: 2px; }
 .zone-core { color: #183e34; font-weight: 600; }
 .zone-buffer { color: #6b6f76; }
+.st-key-ds_estimate_btn, .st-key-ds_run_btn { display: flex; }
+.st-key-ds_estimate_btn button, .st-key-ds_run_btn button {
+    height: 42px; min-height: 42px; width: 100%;
+}
 </style>
 """
 
@@ -208,11 +212,13 @@ def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
     col1, col2 = st.columns(2)
     estimate_clicked = col1.button(
         "Estimate",
+        key="ds_estimate_btn",
         use_container_width=True,
         help="Estimate API call count before running",
     )
     run_clicked = col2.button(
         ":material/play_arrow: Run",
+        key="ds_run_btn",
         type="primary",
         use_container_width=True,
     )
