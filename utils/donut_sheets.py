@@ -316,7 +316,7 @@ def write_run_to_sheet(
             cols=len(OUTPUT_HEADERS) + 2,
         )
 
-    ws.update([OUTPUT_HEADERS] + rows, value_input_option="RAW")
+    ws.update([OUTPUT_HEADERS] + rows, value_input_option="USER_ENTERED")
 
     _upsert_area_index_row(
         ss,
