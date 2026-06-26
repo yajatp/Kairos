@@ -118,15 +118,28 @@ def _nearby_search_page(
         headers={
             "Content-Type": "application/json",
             "X-Goog-Api-Key": api_key,
+            # Pull contact + hours fields here so we don't need a per-clinic
+            # Place Details call afterward (one search call returns everything).
             "X-Goog-FieldMask": (
                 "places.id,places.displayName,places.formattedAddress,"
-                "places.location,places.businessStatus"
+                "places.location,places.businessStatus,"
+                "places.nationalPhoneNumber,places.websiteUri,"
+                "places.regularOpeningHours"
             ),
         },
         json=body,
         timeout=15,
     )
     return resp.json()
+
+
+def _parse_weekday_hours(opening_hours: dict) -> dict[str, str]:
+    hours_by_day: dict[str, str] = {}
+    for desc in opening_hours.get("weekdayDescriptions", []):
+        if ":" in desc:
+            day, times = desc.split(":", 1)
+            hours_by_day[day.strip()] = times.strip()
+    return hours_by_day
 
 
 def _search_one_circle(lat: float, lng: float, radius_m: float, api_key: str) -> list[dict]:
@@ -144,8 +157,12 @@ def _search_one_circle(lat: float, lng: float, radius_m: float, api_key: str) ->
         results.append({
             "place_id": place["id"],
             "name": place.get("displayName", {}).get("text", ""),
+            "address": place.get("formattedAddress", ""),
+            "phone": place.get("nationalPhoneNumber", ""),
+            "website": place.get("websiteUri", ""),
             "lat": loc.get("latitude"),
             "lng": loc.get("longitude"),
+            "hours_by_day": _parse_weekday_hours(place.get("regularOpeningHours", {})),
         })
 
     return results
@@ -173,13 +190,6 @@ def get_place_details_for_donut(place_id: str, api_key: str) -> dict:
 
         loc = data.get("location", {})
 
-        hours_by_day: dict[str, str] = {}
-        if "regularOpeningHours" in data:
-            for desc in data["regularOpeningHours"].get("weekdayDescriptions", []):
-                if ":" in desc:
-                    day, times = desc.split(":", 1)
-                    hours_by_day[day.strip()] = times.strip()
-
         return {
             "place_id": place_id,
             "name": data.get("displayName", {}).get("text", ""),
@@ -188,7 +198,7 @@ def get_place_details_for_donut(place_id: str, api_key: str) -> dict:
             "website": data.get("websiteUri", ""),
             "lat": loc.get("latitude"),
             "lng": loc.get("longitude"),
-            "hours_by_day": hours_by_day,
+            "hours_by_day": _parse_weekday_hours(data.get("regularOpeningHours", {})),
         }
     except Exception as e:
         logger.warning("Error fetching details for %s: %s", place_id, e)
@@ -302,8 +312,9 @@ def run_grid_search(
 ) -> list[dict]:
     """
     Tile the polygon bounding box (expanded by buffer_miles) with overlapping circles,
-    run Nearby Search for each, deduplicate by Place ID, fetch Place Details for each
-    unique result. Returns raw (un-filtered) clinic list; call filter_by_polygon afterward.
+    run Nearby Search for each, deduplicate by Place ID. Each Nearby Search already
+    returns contact + hours fields, so no per-clinic Place Details call is needed.
+    Returns raw (un-filtered) clinic list; call filter_by_polygon afterward.
 
     progress_cb(message, fraction_0_to_1)
     """
@@ -317,31 +328,16 @@ def run_grid_search(
         if progress_cb:
             progress_cb(
                 f"Searching grid cell {i + 1} of {total_centers}...",
-                int(2 + 48 * (i + 1) / max(total_centers, 1)),
+                int(2 + 88 * (i + 1) / max(total_centers, 1)),
             )
-        for stub in _search_one_circle(lat, lng, radius_m, api_key):
-            pid = stub.get("place_id")
+        for clinic in _search_one_circle(lat, lng, radius_m, api_key):
+            pid = clinic.get("place_id")
             if pid and pid not in seen:
-                seen[pid] = stub
+                seen[pid] = clinic
         time.sleep(0.1)
 
-    unique_stubs = list(seen.values())
+    clinics = list(seen.values())
     if progress_cb:
-        progress_cb(
-            f"Found {len(unique_stubs)} unique clinics. Fetching details...",
-            50,
-        )
-
-    clinics: list[dict] = []
-    total_stubs = len(unique_stubs)
-    for j, stub in enumerate(unique_stubs):
-        if progress_cb:
-            progress_cb(
-                f"Fetching details for clinic {j + 1} of {total_stubs}...",
-                int(50 + 40 * (j + 1) / max(total_stubs, 1)),
-            )
-        details = get_place_details_for_donut(stub["place_id"], api_key)
-        if details:
-            clinics.append(details)
+        progress_cb(f"Found {len(clinics)} unique clinics.", 90)
 
     return clinics
