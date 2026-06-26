@@ -442,8 +442,16 @@ def _render_results(clinics: list[dict], sheet_result: dict | None) -> None:
 
     df = _build_results_df(clinics)
 
-    col_export1, col_export2, _ = st.columns([1, 1, 4])
-    with col_export1:
+    # Zone filter and the two CSV exports share one row to keep results compact.
+    col_pills, col_csv, col_contacts = st.columns([3, 1, 1], vertical_alignment="center")
+    with col_pills:
+        zone_filter = st.pills(
+            "Inclusion Zone",
+            ["All", "Core only", "Buffer only"],
+            default="All",
+            label_visibility="collapsed",
+        )
+    with col_csv:
         csv = df.to_csv(index=False).encode()
         st.download_button(
             ":material/download: CSV",
@@ -452,7 +460,7 @@ def _render_results(clinics: list[dict], sheet_result: dict | None) -> None:
             mime="text/csv",
             use_container_width=True,
         )
-    with col_export2:
+    with col_contacts:
         phones_emails = df[["Clinic Name", "Phone", "Email", "Head Dentist / Key Staff"]].copy()
         pe_csv = phones_emails.to_csv(index=False).encode()
         st.download_button(
@@ -462,15 +470,6 @@ def _render_results(clinics: list[dict], sheet_result: dict | None) -> None:
             mime="text/csv",
             use_container_width=True,
         )
-
-    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-
-    zone_filter = st.pills(
-        "Inclusion Zone",
-        ["All", "Core only", "Buffer only"],
-        default="All",
-        label_visibility="collapsed",
-    )
 
     display_df = df.copy()
     if zone_filter == "Core only":
@@ -497,7 +496,6 @@ def _render_empty_state() -> None:
     st.markdown(
         """
         <div class='empty-state'>
-          <span class='empty-state-icon'>:material/draw:</span>
           <div class='empty-state-title'>Draw an area to get started</div>
           <div class='empty-state-body'>
             Use the polygon tool on the map to outline the neighborhood you want to canvas.
@@ -543,20 +541,34 @@ else:
     st.markdown("**Draw your target area** — polygon only, one shape at a time")
     new_polygon_coords = _render_draw_map(buffer_miles)
 
-    st.text_input(
-        "Search area",
-        key="ds_area_search",
-        placeholder="Jump to a city or ZIP — e.g. Plano, TX or 75024",
-        label_visibility="collapsed",
-    )
-    _sq = st.session_state.get("ds_area_search", "")
-    if _sq and len(_sq) >= 3:
-        _api_key = _get_secret("GOOGLE_PLACES_API_KEY")
-        _geo = _geocode_for_map(_sq, _api_key) if _api_key else None
-        if _geo:
-            st.caption(f":material/location_on: Centered on {_geo[2]} — draw your polygon here")
+    # One compact row under the map: search box + a contextual right slot
+    # (Clear shape once a polygon exists, otherwise the resolved-location status).
+    _col_search, _col_action = st.columns([3, 2], vertical_alignment="center")
+    with _col_search:
+        st.text_input(
+            "Search area",
+            key="ds_area_search",
+            placeholder="Jump to a city or ZIP — e.g. Plano, TX or 75024",
+            label_visibility="collapsed",
+        )
+    with _col_action:
+        if p.get("polygon_coords"):
+            if st.button(
+                "Clear shape", key="ds_clear_shape", use_container_width=True,
+                help="Remove the drawn polygon and start over",
+            ):
+                _clear_polygon_state(p)
+                p["map_nonce"] = p.get("map_nonce", 0) + 1
+                st.rerun()
         else:
-            st.caption("Location not found — try a city, state, or ZIP code.")
+            _sq = st.session_state.get("ds_area_search", "")
+            if _sq and len(_sq) >= 3:
+                _api_key = _get_secret("GOOGLE_PLACES_API_KEY")
+                _geo = _geocode_for_map(_sq, _api_key) if _api_key else None
+                if _geo:
+                    st.caption(f":material/location_on: Centered on {_geo[2]}")
+                else:
+                    st.caption("Location not found — try a city, state, or ZIP.")
 
     if new_polygon_coords:
         p["polygon_coords"] = new_polygon_coords
@@ -575,12 +587,6 @@ else:
             p["auto_buffer_miles"] = auto_buf
             p["last_calculated_polygon"] = new_polygon_coords
             p["pending_auto_buffer"] = auto_buf
-            st.rerun()
-
-    if p.get("polygon_coords"):
-        if st.button("Clear shape", key="ds_clear_shape", help="Remove the drawn polygon and start over"):
-            _clear_polygon_state(p)
-            p["map_nonce"] = p.get("map_nonce", 0) + 1
             st.rerun()
 
 polygon_coords = p.get("polygon_coords")
