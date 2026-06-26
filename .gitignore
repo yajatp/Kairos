@@ -8,3 +8,4 @@ api_usage.json
 kairos-*.json
 test_runs_log.txt
 test_map.html
+node_modules/
