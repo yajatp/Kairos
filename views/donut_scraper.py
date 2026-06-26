@@ -328,6 +328,11 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
 
     if p.get("polygon_coords"):
         coords = p["polygon_coords"]
+        # Overlays are click-through (pointer-events:none) so they never block
+        # selecting/deleting the editable draw polygon underneath them.
+        m.get_root().html.add_child(folium.Element(
+            "<style>.ds-buffer-ring,.ds-core-poly{pointer-events:none !important;}</style>"
+        ))
         if buffer_miles > 0:
             outline = compute_buffered_outline(coords, buffer_miles)
             if outline:
@@ -339,7 +344,7 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
                     fill=True,
                     fill_color="#3abdaf",
                     fill_opacity=0.06,
-                    tooltip=f"{buffer_miles:.1f} mi buffer",
+                    class_name="ds-buffer-ring",
                 ).add_to(m)
         folium.Polygon(
             locations=[[c[1], c[0]] for c in coords],
@@ -348,6 +353,7 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
             fill=True,
             fill_color="#183e34",
             fill_opacity=0.08,
+            class_name="ds-core-poly",
         ).add_to(m)
 
     result = st_folium(m, width="100%", height=440, key="donut_draw_map", returned_objects=["last_active_drawing"])
