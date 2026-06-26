@@ -10,6 +10,7 @@ import folium
 import pandas as pd
 import requests
 import streamlit as st
+from folium.plugins import MeasureControl
 from streamlit_folium import st_folium
 
 
@@ -668,6 +669,13 @@ with st.sidebar:
             fill_opacity=0.1,
             weight=1.5,
         ).add_to(_m)
+
+    MeasureControl(
+        position="topright",
+        primary_length_unit="miles",
+        secondary_length_unit="feet",
+        primary_area_unit="sqmiles",
+    ).add_to(_m)
 
     _scale_js = """
     <script>

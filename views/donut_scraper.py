@@ -8,7 +8,7 @@ from datetime import date
 import folium
 import pandas as pd
 import streamlit as st
-from folium.plugins import Draw
+from folium.plugins import Draw, MeasureControl
 from streamlit_folium import st_folium
 
 from pipeline.donut_search import (
@@ -18,11 +18,13 @@ from pipeline.donut_search import (
     run_grid_search,
     compute_polygon_area_sqmi,
     compute_polygon_centroid,
+    compute_buffered_outline,
 )
 from pipeline.places import reverse_geocode
 import math
 from pipeline.donut_enrichment import enrich_clinic
 from utils.donut_sheets import write_run_to_sheet
+from utils.usage_tracker import GOOGLE_SEARCH_COST
 
 
 def _get_secret(key: str) -> str:
@@ -213,7 +215,7 @@ _TILE_LAYERS = {
 
 
 
-def _render_draw_map() -> list[list[float]] | None:
+def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
     """Render the Folium draw map. Returns polygon coords [[lng, lat], ...] or None."""
     p = st.session_state._donut_pipeline
 
@@ -308,8 +310,29 @@ def _render_draw_map() -> list[list[float]] | None:
         edit_options={"edit": True, "remove": True},
     ).add_to(m)
 
+    # Movable ruler — click points to measure real distance/area on the map
+    MeasureControl(
+        position="topright",
+        primary_length_unit="miles",
+        secondary_length_unit="feet",
+        primary_area_unit="sqmiles",
+    ).add_to(m)
+
     if p.get("polygon_coords"):
         coords = p["polygon_coords"]
+        if buffer_miles > 0:
+            outline = compute_buffered_outline(coords, buffer_miles)
+            if outline:
+                folium.Polygon(
+                    locations=[[c[1], c[0]] for c in outline],
+                    color="#3abdaf",
+                    weight=2,
+                    dash_array="6,6",
+                    fill=True,
+                    fill_color="#3abdaf",
+                    fill_opacity=0.06,
+                    tooltip=f"{buffer_miles:.1f} mi buffer",
+                ).add_to(m)
         folium.Polygon(
             locations=[[c[1], c[0]] for c in coords],
             color="#183e34",
@@ -471,20 +494,19 @@ if p["running"]:
     st.info("Map is locked while the scraper is running.")
 else:
     st.markdown("**Draw your target area** — polygon only, one shape at a time")
-    new_polygon_coords = _render_draw_map()
+    new_polygon_coords = _render_draw_map(buffer_miles)
     if new_polygon_coords:
         p["polygon_coords"] = new_polygon_coords
-        
-        # Auto-calculate stats if it's a newly drawn polygon
+
+        # On a freshly drawn polygon: measure it, locate it, and pick an adaptive buffer
         if new_polygon_coords != p.get("last_calculated_polygon"):
             area = compute_polygon_area_sqmi(new_polygon_coords)
             lat, lng = compute_polygon_centroid(new_polygon_coords)
             api_key = _get_secret("GOOGLE_PLACES_API_KEY")
             city_state = reverse_geocode(lat, lng, api_key) if api_key else "Unknown Location"
-            
-            calc_buf = max(0.1, min(5.0, math.sqrt(area) * 0.2))
-            auto_buf = round(calc_buf, 1)
-            
+
+            auto_buf = round(max(0.1, min(5.0, math.sqrt(area) * 0.2)), 1)
+
             p["area_sqmi"] = area
             p["city_state"] = city_state
             p["auto_buffer_miles"] = auto_buf
@@ -494,32 +516,51 @@ else:
 
 polygon_coords = p.get("polygon_coords")
 
-# Feedback Card
+# Pre-run check — live summary of what the run will cost and cover
 if polygon_coords and not p["running"]:
     area = p.get("area_sqmi", 0.0)
     city = p.get("city_state", "Unknown Location")
-    buf = p.get("auto_buffer_miles", 0.5)
-    
+    auto_buf = p.get("auto_buffer_miles", 0.5)
+    n_queries = estimate_circle_count(polygon_coords)
+    est_cost = n_queries * GOOGLE_SEARCH_COST
+    over_limit = n_queries > CIRCLE_WARNING_THRESHOLD
+    q_color = "#b91c1c" if over_limit else "#183e34"
+
+    def _stat(label: str, value: str, color: str = "#183e34") -> str:
+        return (
+            "<div style='flex:1; min-width:110px;'>"
+            "<div style='font-size:11px; font-weight:600; color:#6b6f76; text-transform:uppercase; letter-spacing:0.05em;'>"
+            f"{label}</div>"
+            f"<div style='font-size:16px; font-weight:600; color:{color}; margin-top:4px;'>{value}</div>"
+            "</div>"
+        )
+
     st.markdown(
-        f"""
-        <div style='background:#f7f7f8; border:1px solid #ededed; border-radius:8px; padding:16px; margin-top:16px; display:flex; gap:16px; flex-wrap:wrap;'>
-            <div style='flex:1; min-width:120px;'>
-                <div style='font-size:11px; font-weight:600; color:#6b6f76; text-transform:uppercase; letter-spacing:0.05em;'>Encompassed Area</div>
-                <div style='font-size:16px; font-weight:600; color:#183e34; margin-top:4px;'>{area:.1f} sq miles</div>
-            </div>
-            <div style='flex:1; min-width:120px;'>
-                <div style='font-size:11px; font-weight:600; color:#6b6f76; text-transform:uppercase; letter-spacing:0.05em;'>Primary Location</div>
-                <div style='font-size:16px; font-weight:600; color:#183e34; margin-top:4px;'>{city}</div>
-            </div>
-            <div style='flex:1; min-width:120px;'>
-                <div style='font-size:11px; font-weight:600; color:#6b6f76; text-transform:uppercase; letter-spacing:0.05em;'>Auto-Buffer Picked</div>
-                <div style='font-size:16px; font-weight:600; color:#183e34; margin-top:4px;'>{buf:.1f} miles</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True
+        "<div style='background:#f7f7f8; border:1px solid #ededed; border-radius:8px; padding:16px; "
+        "margin-top:16px; display:flex; gap:16px; flex-wrap:wrap;'>"
+        + _stat("Encompassed Area", f"{area:.1f} sq mi")
+        + _stat("Primary Location", city)
+        + _stat("Buffer (active)", f"{buffer_miles:.1f} mi")
+        + _stat("Grid Queries", f"{n_queries}", q_color)
+        + _stat("Est. Search Cost", f"${est_cost:.2f}", q_color)
+        + "</div>",
+        unsafe_allow_html=True,
     )
-    st.caption("You can override this suggested buffer distance using the sidebar before clicking Run.")
+    if over_limit:
+        st.warning(
+            f":material/warning: {n_queries} grid queries exceeds the recommended "
+            f"{CIRCLE_WARNING_THRESHOLD}. Consider a smaller area before running."
+        )
+    if abs(buffer_miles - auto_buf) > 0.01:
+        st.caption(
+            f"Adaptive buffer suggested **{auto_buf:.1f} mi** for this area "
+            f"(you set {buffer_miles:.1f} mi). The teal dashed ring on the map is the active buffer."
+        )
+    else:
+        st.caption(
+            f"Buffer auto-set to **{auto_buf:.1f} mi** based on area size — override it in the sidebar. "
+            "The teal dashed ring on the map shows the active buffer."
+        )
 
 # Estimate button
 if estimate_clicked:
@@ -546,40 +587,19 @@ if run_clicked:
     elif p["running"]:
         st.warning("A run is already in progress.")
     else:
-        n = estimate_circle_count(polygon_coords)
-        if n > CIRCLE_WARNING_THRESHOLD:
-            st.warning(
-                f"This area needs **{n} grid queries**. "
-                f"Consider drawing a smaller area, or confirm you want to proceed."
-            )
-            if st.button("Confirm — run anyway", type="primary"):
-                p.update({
-                    "running": True, "error": None, "clinics": None,
-                    "sheet_result": None, "buffer_miles": buffer_miles,
-                    "area_name": area_name, "progress": 0, "message": "",
-                    "messages": [],
-                })
-                t = threading.Thread(
-                    target=_run_pipeline,
-                    args=(p, polygon_coords, buffer_miles, area_name, api_key, gemini_key),
-                    daemon=True,
-                )
-                t.start()
-                st.rerun()
-        else:
-            p.update({
-                "running": True, "error": None, "clinics": None,
-                "sheet_result": None, "buffer_miles": buffer_miles,
-                "area_name": area_name, "progress": 0, "message": "",
-                "messages": [],
-            })
-            t = threading.Thread(
-                target=_run_pipeline,
-                args=(p, polygon_coords, buffer_miles, area_name, api_key, gemini_key),
-                daemon=True,
-            )
-            t.start()
-            st.rerun()
+        p.update({
+            "running": True, "error": None, "clinics": None,
+            "sheet_result": None, "buffer_miles": buffer_miles,
+            "area_name": area_name, "progress": 0, "message": "",
+            "messages": [],
+        })
+        t = threading.Thread(
+            target=_run_pipeline,
+            args=(p, polygon_coords, buffer_miles, area_name, api_key, gemini_key),
+            daemon=True,
+        )
+        t.start()
+        st.rerun()
 
 # Progress display
 if p["running"]:

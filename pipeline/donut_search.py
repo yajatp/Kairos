@@ -208,6 +208,21 @@ def compute_polygon_centroid(coords: list[list[float]]) -> tuple[float, float]:
         return (sum(lats) / len(lats), sum(lngs) / len(lngs))
 
 
+def compute_buffered_outline(coords: list[list[float]], buffer_miles: float) -> list[list[float]]:
+    """Exterior ring [[lng, lat], ...] of the polygon expanded by buffer_miles.
+    Mirrors the degree buffer (1 mi ~= 1/69 deg) used in filter_by_polygon so the
+    drawn outline matches exactly which clinics get tagged 'buffer'."""
+    if not coords or buffer_miles <= 0:
+        return []
+    try:
+        from shapely.geometry import Polygon
+        poly = Polygon([(c[0], c[1]) for c in coords])
+        buffered = poly.buffer(buffer_miles / 69.0)
+        return [[x, y] for x, y in buffered.exterior.coords]
+    except Exception:
+        return []
+
+
 def filter_by_polygon(
     clinics: list[dict],
     polygon_coords: list[list[float]],
