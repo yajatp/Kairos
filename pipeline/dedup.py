@@ -97,9 +97,22 @@ def _extract_doctor_from_name(name: str) -> str | None:
     # Strip "Dr." prefix
     clean = _DR_PREFIX_RE.sub("", clean).strip()
 
-    # If there's a business suffix, try to extract the person part before it
+    # If there's a business suffix, try to extract the person part
     biz_match = _BUSINESS_SUFFIXES.search(clean)
     if biz_match:
+        # Check if the name is split by a delimiter like colon, dash, or pipe
+        parts = re.split(r"[:|\-–—]", clean)
+        if len(parts) > 1:
+            # Find the part that has a credential or Dr. prefix
+            for p in parts:
+                p_clean = p.strip()
+                if _CREDENTIAL_RE.search(p_clean) or _DR_PREFIX_RE.match(p_clean):
+                    # Extract from just this part
+                    extracted = _extract_doctor_from_name(p_clean)
+                    if extracted:
+                        return extracted
+        
+        # Fallback: assume the person is before the business suffix
         person_part = clean[: biz_match.start()].strip(" -–—,")
         if person_part and len(person_part.split()) >= 2:
             return person_part
