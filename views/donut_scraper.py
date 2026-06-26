@@ -633,11 +633,11 @@ if polygon_coords and not p["running"]:
         + "</div>",
         unsafe_allow_html=True,
     )
-        if over_limit:
-            st.warning(
-                f":material/warning: {n_queries} grid queries exceeds the recommended "
-                f"{CIRCLE_WARNING_THRESHOLD}. Consider a smaller area before running."
-            )
+    if over_limit:
+        st.warning(
+            f":material/warning: {n_queries} grid queries exceeds the recommended "
+            f"{CIRCLE_WARNING_THRESHOLD}. Consider a smaller area before running."
+        )
 
 # Run button
 if run_clicked:
