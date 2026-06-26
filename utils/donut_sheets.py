@@ -266,8 +266,8 @@ def write_run_to_sheet(
     match = _find_matching_area(area_index, polygon_coords)
     if match:
         tab_name = match["tab_name"]
-        # Upgrade coordinate-based tab names (e.g. "2026-06-25 (33.11, -96.67) (auto)")
-        if " (auto)" in tab_name and re.search(r"\(\s*-?\d+\.\d+,\s*-?\d+\.\d+\s*\)", tab_name):
+        # Upgrade coordinate-based tab names (e.g. "2026-06-25 (33.11, -96.67)")
+        if re.search(r"\(\s*-?\d+\.\d+,\s*-?\d+\.\d+\s*\)", tab_name):
             primary = _derive_primary_location(clinics)
             if primary:
                 new_base = f"{primary} (auto)"
@@ -275,6 +275,17 @@ def write_run_to_sheet(
                 try:
                     ws = ss.worksheet(tab_name)
                     ws.update_title(new_tab_name)
+                    # Update the area index to replace the old name so it doesn't get orphaned
+                    try:
+                        idx_ws = ss.worksheet(_AREA_INDEX_TAB)
+                        idx_rows = idx_ws.get_all_values()
+                        for i, r in enumerate(idx_rows):
+                            if r and r[0] == tab_name:
+                                idx_ws.update_cell(i + 1, 1, new_tab_name)
+                                break
+                    except Exception as e:
+                        logger.warning("Failed to update area index after rename: %s", e)
+                        
                     tab_name = new_tab_name
                     logger.info("Upgraded coordinate tab to %s", tab_name)
                 except Exception as e:
