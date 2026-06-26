@@ -261,8 +261,20 @@ _TILE_LAYERS = {
 
 
 
-def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
-    """Render the Folium draw map. Returns polygon coords [[lng, lat], ...] or None."""
+def _clear_polygon_state(p: dict) -> None:
+    p["polygon_coords"] = None
+    p["last_calculated_polygon"] = None
+    p["area_sqmi"] = 0.0
+    p["city_state"] = None
+    p["auto_buffer_miles"] = 0.5
+
+
+def _render_draw_map(buffer_miles: float = 0.0) -> tuple[list[list[float]] | None, bool]:
+    """Render the Folium draw map.
+
+    Returns (polygon_coords, cleared). polygon_coords is [[lng, lat], ...] when the
+    user drew or edited a shape this interaction; cleared is True when the user
+    removed the shape with the Draw trash tool (all drawings reported empty)."""
     p = st.session_state._donut_pipeline
 
     center_lat = 32.7767
@@ -293,9 +305,26 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
 
     m.add_child(_ImperialScale())
 
+    # The persisted polygon must live INSIDE the Draw control's editable feature
+    # group — not as a separate static overlay — or the edit/delete tools have no
+    # layer to select after a rerun (the old bug). st_folium aliases this group to
+    # window.drawnItems, so deleting it here makes all_drawings report empty.
+    draw_fg = folium.FeatureGroup(name="drawn_shape")
+    if p.get("polygon_coords"):
+        folium.Polygon(
+            locations=[[c[1], c[0]] for c in p["polygon_coords"]],
+            color="#183e34",
+            weight=2,
+            fill=True,
+            fill_color="#183e34",
+            fill_opacity=0.08,
+        ).add_to(draw_fg)
+    draw_fg.add_to(m)
+
     Draw(
         export=False,
         position="topleft",
+        feature_group=draw_fg,
         draw_options={
             "polygon": {
                 "allowIntersection": False,
@@ -318,48 +347,42 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
         primary_area_unit="sqmiles",
     ).add_to(m)
 
-    if p.get("polygon_coords"):
-        coords = p["polygon_coords"]
-        # Overlays are click-through (pointer-events:none) so they never block
-        # selecting/deleting the editable draw polygon underneath them.
+    if p.get("polygon_coords") and buffer_miles > 0:
+        # Buffer ring is a static, click-through overlay so it never blocks the
+        # editable polygon underneath it.
         m.get_root().html.add_child(folium.Element(
-            "<style>.ds-buffer-ring,.ds-core-poly{pointer-events:none !important;}</style>"
+            "<style>.ds-buffer-ring{pointer-events:none !important;}</style>"
         ))
-        if buffer_miles > 0:
-            outline = compute_buffered_outline(coords, buffer_miles)
-            if outline:
-                folium.Polygon(
-                    locations=[[c[1], c[0]] for c in outline],
-                    color="#3abdaf",
-                    weight=2,
-                    dash_array="6,6",
-                    fill=True,
-                    fill_color="#3abdaf",
-                    fill_opacity=0.06,
-                    class_name="ds-buffer-ring",
-                ).add_to(m)
-        folium.Polygon(
-            locations=[[c[1], c[0]] for c in coords],
-            color="#183e34",
-            weight=2,
-            fill=True,
-            fill_color="#183e34",
-            fill_opacity=0.08,
-            class_name="ds-core-poly",
-        ).add_to(m)
+        outline = compute_buffered_outline(p["polygon_coords"], buffer_miles)
+        if outline:
+            folium.Polygon(
+                locations=[[c[1], c[0]] for c in outline],
+                color="#3abdaf",
+                weight=2,
+                dash_array="6,6",
+                fill=True,
+                fill_color="#3abdaf",
+                fill_opacity=0.06,
+                class_name="ds-buffer-ring",
+            ).add_to(m)
 
-    result = st_folium(m, width="100%", height=440, key="donut_draw_map", returned_objects=["last_active_drawing"])
+    result = st_folium(
+        m, width="100%", height=440, key="donut_draw_map",
+        returned_objects=["all_drawings"],
+    )
 
-    polygon_coords = None
-    if result and result.get("last_active_drawing"):
-        drawing = result["last_active_drawing"]
-        geo = drawing.get("geometry", {})
-        if geo.get("type") == "Polygon":
-            coords = geo.get("coordinates", [[]])[0]
-            if len(coords) >= 3:
-                polygon_coords = coords
-
-    return polygon_coords
+    if not result:
+        return None, False
+    drawings = result.get("all_drawings")
+    if drawings is None:
+        return None, False  # no draw interaction this run — keep current state
+    polys = [d for d in drawings if d.get("geometry", {}).get("type") == "Polygon"]
+    if polys:
+        ring = polys[-1].get("geometry", {}).get("coordinates", [[]])[0]
+        if len(ring) >= 3:
+            return ring, False
+        return None, False
+    return None, True  # drawings explicitly empty — user deleted the shape
 
 
 def _render_results(clinics: list[dict], sheet_result: dict | None) -> None:
@@ -493,8 +516,11 @@ if p["running"]:
     st.info("Map is locked while the scraper is running.")
 else:
     st.markdown("**Draw your target area** — polygon only, one shape at a time")
-    new_polygon_coords = _render_draw_map(buffer_miles)
-    if new_polygon_coords:
+    new_polygon_coords, cleared = _render_draw_map(buffer_miles)
+    if cleared and p.get("polygon_coords"):
+        _clear_polygon_state(p)
+        st.rerun()
+    elif new_polygon_coords:
         p["polygon_coords"] = new_polygon_coords
 
         # On a freshly drawn polygon: measure it, locate it, and pick an adaptive buffer
@@ -511,6 +537,11 @@ else:
             p["auto_buffer_miles"] = auto_buf
             p["last_calculated_polygon"] = new_polygon_coords
             p["pending_auto_buffer"] = auto_buf
+            st.rerun()
+
+    if p.get("polygon_coords"):
+        if st.button("Clear shape", key="ds_clear_shape", help="Remove the drawn polygon and start over"):
+            _clear_polygon_state(p)
             st.rerun()
 
 polygon_coords = p.get("polygon_coords")
