@@ -615,11 +615,11 @@ if polygon_coords and not p["running"]:
 
     _tag = "<span style='font-size:11px; font-weight:500; color:#6b6f76;'> {}</span>"
     if buffer_miles <= 0:
-        buffer_display = "<span style='color:#6b6f76;'>Off</span>"
+        buffer_display = "<span style='color:#6b6f76;'>Off</span>" + _tag.format(f"(auto {auto_buf:.1f})")
     elif abs(buffer_miles - auto_buf) <= 0.01:
         buffer_display = f"{buffer_miles:.1f} mi" + _tag.format("auto")
     else:
-        buffer_display = f"{buffer_miles:.1f} mi"
+        buffer_display = f"{buffer_miles:.1f} mi" + _tag.format(f"(auto {auto_buf:.1f})")
 
     st.markdown(
         "<div style='background:#f7f7f8; border:1px solid #ededed; border-radius:8px; padding:16px; "
