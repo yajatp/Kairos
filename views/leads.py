@@ -12,6 +12,20 @@ import requests
 import streamlit as st
 from folium.plugins import MeasureControl
 from streamlit_folium import st_folium
+from branca.element import MacroElement, Template
+
+
+class _ImperialScale(MacroElement):
+    """Miles-only Leaflet scale control, baked into the map init so it renders reliably under st_folium."""
+
+    _name = "ImperialScale"
+    _template = Template(
+        """
+        {% macro script(this, kwargs) %}
+        L.control.scale({maxWidth: 100, metric: false, imperial: true}).addTo({{ this._parent.get_name() }});
+        {% endmacro %}
+        """
+    )
 
 
 def _get_secret(key: str) -> str:
@@ -677,33 +691,7 @@ with st.sidebar:
         primary_area_unit="sqmiles",
     ).add_to(_m)
 
-    _scale_js = """
-    <script>
-    (function() {
-        function initScale() {
-            if (typeof MAP_VAR_NAME === 'undefined') {
-                setTimeout(initScale, 100);
-                return;
-            }
-            var map = MAP_VAR_NAME;
-            
-            // Add custom scale control
-            var scaleControl = L.control.scale({metric: false, imperial: true});
-            scaleControl.addTo(map);
-        }
-        function waitLeaflet() {
-            if (typeof L !== 'undefined') {
-                initScale();
-            } else {
-                setTimeout(waitLeaflet, 100);
-            }
-        }
-        waitLeaflet();
-    })();
-    </script>
-    """
-    _scale_js = _scale_js.replace("MAP_VAR_NAME", _m.get_name())
-    _m.get_root().html.add_child(folium.Element(_scale_js))
+    _m.add_child(_ImperialScale())
 
     _map_data = st_folium(
         _m,

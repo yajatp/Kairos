@@ -10,6 +10,20 @@ import pandas as pd
 import streamlit as st
 from folium.plugins import Draw, MeasureControl
 from streamlit_folium import st_folium
+from branca.element import MacroElement, Template
+
+
+class _ImperialScale(MacroElement):
+    """Miles-only Leaflet scale control, baked into the map init so it renders reliably under st_folium."""
+
+    _name = "ImperialScale"
+    _template = Template(
+        """
+        {% macro script(this, kwargs) %}
+        L.control.scale({maxWidth: 100, metric: false, imperial: true}).addTo({{ this._parent.get_name() }});
+        {% endmacro %}
+        """
+    )
 
 from pipeline.donut_search import (
     CIRCLE_WARNING_THRESHOLD,
@@ -211,10 +225,6 @@ _TILE_LAYERS = {
         "tiles": "OpenStreetMap",
         "attr": None,
     },
-    "Satellite": {
-        "tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        "attr": "Esri World Imagery",
-    },
     "Light Streets": {
         "tiles": "CartoDB positron",
         "attr": None,
@@ -253,53 +263,7 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
 
     folium.LayerControl(position="bottomright", collapsed=True).add_to(m)
 
-    # Auto satellite labels – no toggle, injected via Leaflet JS after map initialization
-    _auto_labels_js = """
-    <script>
-    (function() {
-        var checkCount = 0;
-        function initAutoLabels() {
-            if (typeof MAP_VAR_NAME === 'undefined') {
-                checkCount++;
-                if (checkCount < 100) {
-                    setTimeout(initAutoLabels, 100);
-                }
-                return;
-            }
-            var map = MAP_VAR_NAME;
-            var labelsLayer = L.tileLayer(
-                'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
-                {
-                    attribution: '&copy; CartoDB',
-                    pane: 'overlayPane',
-                    zIndex: 650
-                }
-            );
-            map.on('baselayerchange', function(e) {
-                if (e.name === 'Satellite') {
-                    map.addLayer(labelsLayer);
-                } else {
-                    map.removeLayer(labelsLayer);
-                }
-            });
-
-            // Add custom scale control
-            var scaleControl = L.control.scale({metric: false, imperial: true});
-            scaleControl.addTo(map);
-        }
-        function waitLeaflet() {
-            if (typeof L !== 'undefined') {
-                initAutoLabels();
-            } else {
-                setTimeout(waitLeaflet, 100);
-            }
-        }
-        waitLeaflet();
-    })();
-    </script>
-    """
-    _auto_labels_js = _auto_labels_js.replace("MAP_VAR_NAME", m.get_name())
-    m.get_root().html.add_child(folium.Element(_auto_labels_js))
+    m.add_child(_ImperialScale())
 
     Draw(
         export=False,

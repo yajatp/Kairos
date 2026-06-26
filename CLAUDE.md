@@ -6,6 +6,17 @@
 - **No comments explaining what code does.** Only add a comment when the WHY is non-obvious.
 - **No new files unless required.** Prefer editing existing files.
 
+## ⚠ Making the user actually SEE your changes (READ THIS BEFORE CLAIMING A FIX WORKS)
+
+This app runs on **Streamlit Community Cloud** (the "Manage app" pill bottom-right and "Deploy" button top-right in the UI are the tells). The user almost always views the **deployed cloud URL**, not localhost. Cloud builds from **GitHub `origin/main`** — so **uncommitted local edits never appear in what the user sees.** "Reboot app" on Cloud just redeploys the *existing* committed code; it does NOT pick up local changes.
+
+This has repeatedly caused "I made the change but the user never sees it." To avoid it:
+
+1. **If the user is looking at the deployed app, the only way they see your change is to commit AND push to `main`.** A local file edit, a `streamlit run` restart, or a Cloud reboot will NOT show it. Push, then Cloud auto-redeploys in ~1 min.
+2. **When a pure-Python change (e.g. removing a layer, changing a constant) still doesn't show after the user restarts**, suspect this first: the change is uncommitted / unpushed and they're on the cloud deploy. Run `git status --short` to confirm there are `M` (modified-but-uncommitted) files.
+3. **Local testing alternative:** `streamlit run app.py` and view the `localhost` URL (NOT the cloud URL). Note Streamlit reloads imported modules under `views/` on file change, but if it misses one, fully restart the server.
+4. **Map-specific (st_folium):** the maps live in `views/donut_scraper.py` and `views/leads.py`. Custom Leaflet JS injected via `m.get_root().html.add_child(folium.Element("<script>..."))` is **unreliable inside the st_folium iframe** — it often silently doesn't run. Bake controls into the map's own init instead, via a `branca.element.MacroElement` whose `{% macro script %}` does `...addTo({{ this._parent.get_name() }})` and adding it with `m.add_child(...)` (see `_ImperialScale`). This is the same reliable mechanism folium's built-in `control_scale=True` uses.
+
 ## Stack
 
 - Streamlit 1.50 multi-page app (`app.py` → `pages/`)
