@@ -626,6 +626,7 @@ if polygon_coords and not p["running"]:
             f":material/warning: {n_queries} grid queries exceeds the recommended "
             f"{CIRCLE_WARNING_THRESHOLD}. Consider a smaller area before running."
         )
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
     if abs(buffer_miles - auto_buf) > 0.01:
         st.caption(
             f"Adaptive buffer suggested **{auto_buf:.1f} mi** for this area "
