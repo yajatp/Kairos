@@ -804,6 +804,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+from utils.sheets import SPREADSHEET_ID as _LEADS_SPREADSHEET_ID
+
+st.link_button(
+    "Open Google Sheet",
+    f"https://docs.google.com/spreadsheets/d/{_LEADS_SPREADSHEET_ID}",
+    icon=":material/table_chart:",
+)
+
 # ── API warnings ────────────────────────────────────────────────────────────────
 if not GOOGLE_PLACES_API_KEY:
     st.error("Google Places API key not configured. Add `GOOGLE_PLACES_API_KEY` to your `.env` file.")

@@ -531,6 +531,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+_donut_sheet_id = os.getenv("DONUT_SPREADSHEET_ID", "").strip() or "1eEpIsP6zVoshFOayOr3sY_KybBAzc16K1RuNPMVfnd4"
+st.link_button(
+    "Open Google Sheet",
+    f"https://docs.google.com/spreadsheets/d/{_donut_sheet_id}",
+    icon=":material/table_chart:",
+)
+
 # Sidebar controls
 with st.sidebar:
     buffer_miles, area_name, use_gemini, run_clicked = _render_sidebar_controls()
