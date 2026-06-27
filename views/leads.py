@@ -224,37 +224,37 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
 
         total = len(new_clinics)
 
-        for i, clinic in enumerate(new_clinics):
-            if p["stop_requested"]:
-                log(f"Stopped after {i} of {total} clinics.")
-                break
-
-            p["progress"] = 30 + int((i / total) * 40) if total else 70
-            log(f"Fetching clinic details... ({i + 1}/{total})")
-
-            details     = get_clinic_details(clinic["place_id"], GOOGLE_PLACES_API_KEY)
-            _calls["detail"] += 1
+        import concurrent.futures
+        
+        def _process_clinic(clinic):
+            local_calls = {"detail": 0, "gemini": 0}
+            local_errors = []
+            fallback_count = 0
+            
+            details = get_clinic_details(clinic["place_id"], GOOGLE_PLACES_API_KEY)
+            local_calls["detail"] += 1
             if not details:
-                continue
-
+                return None
+                
             website_data  = check_website(details.get("website"))
             job_match     = match_clinic_to_job(details.get("name", ""), jobs)
-
+            
             _gem_key = p.get("gemini_key", "")
             if _gem_key:
                 from pipeline.review_scanner_ab import scan_method_b
-                _calls["gemini"] += 1
+                local_calls["gemini"] += 1
                 try:
                     review_data = scan_method_b(details.get("reviews", []), _gem_key)
                     review_data["review_method"] = "ai"
                 except Exception as _e:
                     review_data = scan_reviews(details.get("reviews", []))
                     review_data["review_method"] = "pattern_fallback"
-                    p["fallback_count"] = p.get("fallback_count", 0) + 1
-                    p["run_errors"].append(f"AI review failed ({details.get('name','?')}): {str(_e)[:120]}")
+                    fallback_count += 1
+                    local_errors.append(f"AI review failed ({details.get('name','?')}): {str(_e)[:120]}")
             else:
                 review_data = scan_reviews(details.get("reviews", []))
                 review_data["review_method"] = "pattern"
+                
             review_data["review_source"] = "places_sample"
             extended      = detect_extended_hours(details.get("opening_hours"))
             specialty     = infer_specialty(details.get("name", ""), details.get("types", []))
@@ -281,7 +281,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
             pain_score, signals = calculate_pain_score(clinic_data)
             classification      = classify_clinic(details.get("name", ""), num_locations=1)
 
-            leads.append({
+            res_lead = {
                 "place_id":       clinic["place_id"],
                 "details":        details,
                 "clinic_data":    clinic_data,
@@ -291,65 +291,137 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 "job_match":      job_match,
                 "review_data":    review_data,
                 "classification": classification,
-            })
+            }
+            
+            return {
+                "lead": res_lead,
+                "calls": local_calls,
+                "errors": local_errors,
+                "fallback_count": fallback_count,
+            }
 
-            if is_borderline(pain_score):
-                borderline_queue.append(len(leads) - 1)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_clinic = {executor.submit(_process_clinic, c): c for c in new_clinics}
+            
+            completed_count = 0
+            for future in concurrent.futures.as_completed(future_to_clinic):
+                if p["stop_requested"]:
+                    log(f"Stopped after {completed_count} of {total} clinics.")
+                    executor.shutdown(wait=False, cancel_futures=True)
+                    break
+
+                completed_count += 1
+                p["progress"] = 30 + int((completed_count / total) * 40) if total else 70
+                log(f"Fetching clinic details... ({completed_count}/{total})")
+                
+                try:
+                    res = future.result()
+                    if res:
+                        leads.append(res["lead"])
+                        _calls["detail"] += res["calls"]["detail"]
+                        _calls["gemini"] += res["calls"]["gemini"]
+                        p["fallback_count"] = p.get("fallback_count", 0) + res["fallback_count"]
+                        p["run_errors"].extend(res["errors"])
+                        
+                        if is_borderline(res["lead"]["pain_score"]):
+                            borderline_queue.append(len(leads) - 1)
+                except Exception as e:
+                    p["run_errors"].append(f"Unexpected parallel error: {e}")
 
         p["progress"] = 70
 
-        if not p["stop_requested"]:
+        if not p["stop_requested"] and borderline_queue:
             log(f"Deep review scans on {len(borderline_queue)} borderline clinics...")
             OUTSCRAPER_REVIEWS_PER_CALL = 10
+            
+            calls_made_lock = threading.Lock()
             calls_made = 0
-
-            for idx in borderline_queue:
-                if p["stop_requested"]:
-                    log("Stopped during deep scans.")
-                    break
-                if calls_made >= 15:
-                    leads[idx]["clinic_data"]["enrichment_note"] = "Per-run cap reached — Places sample only"
-                    continue
+            
+            def _process_deep_scan(idx):
+                nonlocal calls_made
+                with calls_made_lock:
+                    if calls_made >= 15:
+                        return idx, {"error": "Per-run cap reached — Places sample only"}
+                    calls_made += 1
+                    
                 if not OUTSCRAPER_API_KEY:
-                    leads[idx]["clinic_data"]["enrichment_note"] = "Outscraper not configured — Places sample only"
-                    continue
-
+                    return idx, {"error": "Outscraper not configured — Places sample only"}
+                
                 deep_reviews = fetch_deep_reviews(leads[idx]["place_id"], OUTSCRAPER_API_KEY, OUTSCRAPER_REVIEWS_PER_CALL)
-                calls_made += 1
                 if not deep_reviews:
-                    leads[idx]["clinic_data"]["enrichment_note"] = "Outscraper returned no data — Places sample only"
-                    continue
-
-                record_usage(len(deep_reviews))
-                _calls["outscraper_reviews"] += len(deep_reviews)
-
+                    return idx, {"error": "Outscraper returned no data — Places sample only"}
+                    
+                local_calls = {"outscraper": len(deep_reviews), "gemini": 0}
+                local_errors = []
+                fallback_count = 0
+                
                 _gem_key = p.get("gemini_key", "")
                 if _gem_key:
                     from pipeline.review_scanner_ab import scan_method_b as _smb
-                    _calls["gemini"] += 1
+                    local_calls["gemini"] += 1
                     try:
                         dr = _smb(deep_reviews, _gem_key)
                         dr["review_method"] = "ai"
                     except Exception as _e:
                         dr = scan_reviews(deep_reviews)
                         dr["review_method"] = "pattern_fallback"
-                        p["fallback_count"] = p.get("fallback_count", 0) + 1
-                        p["run_errors"].append(f"AI deep scan failed ({leads[idx]['details'].get('name','?')}): {str(_e)[:120]}")
+                        fallback_count += 1
+                        local_errors.append(f"AI deep scan failed ({leads[idx]['details'].get('name','?')}): {str(_e)[:120]}")
                 else:
                     dr = scan_reviews(deep_reviews)
                     dr["review_method"] = "pattern"
                 dr["review_source"] = "outscraper_deep"
-                leads[idx]["clinic_data"].update({
-                    "pain_review_count":    dr["pain_review_count"],
-                    "pain_categories":      dr["pain_categories"],
-                    "worst_review_snippet": dr["worst_review_snippet"],
-                    "review_source":        "outscraper_deep",
-                    "enrichment_note":      f"Deep review scan via Outscraper (n={len(deep_reviews)})",
-                })
-                leads[idx]["review_data"] = dr
-                new_score, new_signals     = calculate_pain_score(leads[idx]["clinic_data"])
-                leads[idx]["pain_score"]  = new_score
-                leads[idx]["signals"]     = new_signals
+                
+                return idx, {
+                    "deep_reviews": deep_reviews,
+                    "dr": dr,
+                    "calls": local_calls,
+                    "errors": local_errors,
+                    "fallback_count": fallback_count
+                }
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                future_to_idx = {executor.submit(_process_deep_scan, idx): idx for idx in borderline_queue}
+                
+                completed_deep = 0
+                for future in concurrent.futures.as_completed(future_to_idx):
+                    if p["stop_requested"]:
+                        log("Stopped during deep scans.")
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
+                        
+                    completed_deep += 1
+                    p["progress"] = 70 + int((completed_deep / len(borderline_queue)) * 20)
+                    
+                    try:
+                        idx, res = future.result()
+                        if "error" in res:
+                            leads[idx]["clinic_data"]["enrichment_note"] = res["error"]
+                            continue
+                            
+                        deep_reviews = res["deep_reviews"]
+                        dr = res["dr"]
+                        
+                        record_usage(len(deep_reviews))
+                        _calls["outscraper_reviews"] += res["calls"]["outscraper"]
+                        _calls["gemini"] += res["calls"]["gemini"]
+                        p["fallback_count"] = p.get("fallback_count", 0) + res["fallback_count"]
+                        p["run_errors"].extend(res["errors"])
+                        
+                        leads[idx]["clinic_data"].update({
+                            "pain_review_count":    dr["pain_review_count"],
+                            "pain_categories":      dr["pain_categories"],
+                            "worst_review_snippet": dr["worst_review_snippet"],
+                            "review_source":        "outscraper_deep",
+                            "enrichment_note":      f"Deep review scan via Outscraper (n={len(deep_reviews)})",
+                        })
+                        leads[idx]["review_data"] = dr
+                        new_score, new_signals    = calculate_pain_score(leads[idx]["clinic_data"])
+                        leads[idx]["pain_score"]  = new_score
+                        leads[idx]["signals"]     = new_signals
+                        
+                    except Exception as e:
+                        p["run_errors"].append(f"Unexpected deep scan error: {e}")
 
         p["progress"] = 90
         log("Building results table...")

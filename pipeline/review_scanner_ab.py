@@ -431,29 +431,32 @@ def scan_method_a(
     if use_ai_highlight and gemini_key and result.get("matched_reviews"):
         for mr in result["matched_reviews"]:
             prompt = (
-                "You are analyzing a dental patient review to identify the single most "
-                "important sentence that reveals an operational problem (e.g., phone, "
-                "scheduling, front desk, insurance billing, or paperwork issues).\n\n"
+                "You are analyzing a dental patient review to identify the most "
+                "important sentences or phrases that reveal an operational problem (e.g., phone, "
+                "scheduling, front desk, insurance billing, or paperwork issues).\n"
+                "Extract all separated impactful sentences or phrases that convey the pain. "
+                "Do not restrict it to a single sentence if there are multiple important parts.\n\n"
                 f"Review text:\n\"\"\"\n{mr['text']}\n\"\"\"\n\n"
                 "Return ONLY a JSON object with this exact structure (no markdown fences):\n"
-                '{"highlight": "<the single most impactful sentence verbatim from the review>"}'
+                '{"highlights": ["<impactful quote 1>", "<impactful quote 2>"]}'
             )
             try:
                 raw = _call_gemini(prompt, gemini_key)
                 data = _extract_json(raw)
-                highlight_text = data.get("highlight", "")
-                if highlight_text:
-                    # Replace keyword-span highlights with AI-identified sentence
-                    start = mr["text"].find(highlight_text)
-                    if start != -1:
-                        mr["highlights"] = [{
-                            "start": start,
-                            "end": start + len(highlight_text),
-                            "category": mr["matched_categories"][0] if mr["matched_categories"] else "unknown",
-                        }]
-                    else:
-                        # Sentence not found verbatim — keep existing highlights
-                        pass
+                highlights_list = data.get("highlights", [])
+                if highlights_list:
+                    new_highlights = []
+                    for h_text in highlights_list:
+                        if h_text:
+                            start = mr["text"].find(h_text)
+                            if start != -1:
+                                new_highlights.append({
+                                    "start": start,
+                                    "end": start + len(h_text),
+                                    "category": mr["matched_categories"][0] if mr["matched_categories"] else "unknown",
+                                })
+                    if new_highlights:
+                        mr["highlights"] = new_highlights
             except Exception:
                 # On any error, keep existing keyword-span highlights
                 pass
@@ -485,7 +488,8 @@ IMPORTANT RULES:
   1. Only flag reviews where the complaint is genuinely negative — a 5-star review that mentions
      "great scheduling" should NOT be flagged.
   2. A review may match multiple categories.
-  3. For each flagged review, return the single most impactful sentence verbatim from the review.
+  3. For each flagged review, extract all separated impactful sentences or phrases that convey the pain.
+     Do not restrict it to a single sentence if there are multiple important parts.
   4. Reviews that are positive or neutral (no real complaint) should NOT appear in your output.
 
 Reviews (indexed 0 to {n_minus_1}):
@@ -496,7 +500,7 @@ Return ONLY a JSON array (no markdown fences, no extra commentary) with this str
   {{
     "index": <integer, 0-based index of the review>,
     "categories": ["<category1>", ...],
-    "highlight": "<the single most impactful sentence verbatim from the review>"
+    "highlights": ["<impactful quote 1 verbatim>", "<impactful quote 2 verbatim>"]
   }},
   ...
 ]
@@ -589,14 +593,16 @@ def scan_method_b(reviews: list[dict], gemini_key: str) -> dict:
 
         # Build highlight span from the AI-identified sentence
         highlights = []
-        if highlight_text:
-            start = rev["text"].find(highlight_text)
-            if start != -1:
-                highlights.append({
-                    "start": start,
-                    "end": start + len(highlight_text),
-                    "category": pain_cats[0],
-                })
+        highlight_texts = item.get("highlights", [])
+        for h_text in highlight_texts:
+            if h_text:
+                start = rev["text"].find(h_text)
+                if start != -1:
+                    highlights.append({
+                        "start": start,
+                        "end": start + len(h_text),
+                        "category": pain_cats[0],
+                    })
 
         matched_reviews.append({
             "text": rev["text"][:1000],
