@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import datetime
 
 import pandas as pd
@@ -10,44 +9,34 @@ import importlib
 import utils.usage_tracker
 importlib.reload(utils.usage_tracker)
 
-from utils.usage_tracker import get_run_history, estimated_google_cost, estimated_outscraper_cost, get_leads_for_run, OUTSCRAPER_BILLING_OFFSET_USD, get_leads_for_runs_bulk
+from utils.usage_tracker import get_run_history, estimated_google_cost, estimated_outscraper_cost, estimated_gemini_cost, get_leads_for_run, OUTSCRAPER_BILLING_OFFSET_USD, get_leads_for_runs_bulk
 from utils.helpers import safe_parse_datetime
 
-_STATE_NAMES = {
-    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
-    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
-    "FL": "Florida", "GA": "Georgia", "HI": "Hawaii", "ID": "Idaho",
-    "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
-    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
-    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
-    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
-    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
-    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
-    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
-    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
-    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
-    "WI": "Wisconsin", "WY": "Wyoming", "DC": "Washington D.C.",
-}
-_STATE_ABBRS = set(_STATE_NAMES.keys())
+# Section accent colors — match the API Usage page so the tools read consistently.
+_C_LEADS = "#14756a"   # deep teal
+_C_DONUT = "#b9692f"   # warm amber
 
+_LEADS_SHEET_URL = "https://docs.google.com/spreadsheets/d/1UlBdK2z7UsP-_IFYhxK5IImmHCOGFKKvaGHUDw_dXHs"
+
+
+def _donut_sheet_url() -> str:
+    import os
+    sid = os.getenv("DONUT_SPREADSHEET_ID", "").strip() or "1eEpIsP6zVoshFOayOr3sY_KybBAzc16K1RuNPMVfnd4"
+    return f"https://docs.google.com/spreadsheets/d/{sid}"
+
+
+def _section_banner(title: str, subtitle: str, color: str, bg: str) -> None:
+    st.markdown(
+        f"<div style='background:{bg};border-left:5px solid {color};border-radius:10px;"
+        f"padding:12px 16px;margin:6px 0 16px;'>"
+        f"<div style='font-size:19px;font-weight:700;color:{color};letter-spacing:-0.02em;'>{title}</div>"
+        f"<div style='font-size:12px;color:#6b6f76;margin-top:3px;'>{subtitle}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 def toggle_view_leads(view_key: str) -> None:
     st.session_state[view_key] = not st.session_state.get(view_key, False)
-
-
-def _parse_location(loc: str) -> tuple[str, str]:
-    if not loc or not loc.strip():
-        return "Unknown", "Unknown"
-    loc = loc.strip()
-    parts = [p.strip() for p in loc.split(",")]
-    if len(parts) >= 2:
-        tail = parts[-1].split()[0].upper()
-        if tail in _STATE_ABBRS:
-            return _STATE_NAMES[tail], ", ".join(parts[:-1])
-    words = loc.split()
-    if len(words) >= 2 and words[-1].upper() in _STATE_ABBRS:
-        return _STATE_NAMES[words[-1].upper()], " ".join(words[:-1])
-    return "Other", loc
 
 
 def _fmt_ts(ts: str, fmt: str = "%b %d, %Y  %H:%M") -> str:
@@ -370,6 +359,56 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
                 st.components.v1.html(scroll_js, height=0, width=0)
 
 
+def _render_donut_run_expander(r: dict, key_prefix: str) -> None:
+    """Render a single Donut Scraper run. Donut clinic rows live in the Google Sheet,
+    not Supabase, so this shows the run summary + a link to the sheet (no View Leads)."""
+    ts       = r.get("timestamp", "")
+    search_c = r.get("search_calls", 0)
+    gem_c    = r.get("gemini_calls", 0)
+    g_cost   = estimated_google_cost(0, search_c, 0)
+    gem_cost = estimated_gemini_cost(gem_c)
+    t_cost   = g_cost + gem_cost
+    ts_fmt   = _fmt_ts(ts)
+    gem_used = "Yes" if gem_c else "No"
+
+    st.markdown(
+        "<div style='background:rgba(207,124,63,0.08);border-radius:8px;padding:14px 16px;"
+        "border-left:3px solid #b9692f;margin-bottom:12px'>"
+        "<div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px'>"
+        "<div>"
+        "<div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;"
+        "letter-spacing:0.07em;margin-bottom:8px'>Results</div>"
+        f"<div style='font-size:13px;color:#282a30;line-height:1.8'>"
+        f"Clinics found: <strong>{r.get('clinics_found', 0)}</strong><br>"
+        f"AI extraction: <strong>{gem_used}</strong></div></div>"
+        "<div>"
+        "<div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;"
+        "letter-spacing:0.07em;margin-bottom:8px'>API Calls</div>"
+        f"<div style='font-size:13px;color:#282a30;line-height:1.8'>"
+        f"Text Search: {search_c}<br>"
+        f"Gemini: {gem_c}</div></div>"
+        "<div>"
+        "<div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;"
+        "letter-spacing:0.07em;margin-bottom:8px'>Cost</div>"
+        f"<div style='font-size:13px;color:#282a30;line-height:1.8'>"
+        f"Google: ${g_cost:.3f}<br>"
+        f"Gemini: ${gem_cost:.4f}<br>"
+        f"<strong>Total: ${t_cost:.3f}</strong><br>"
+        f"<span style='color:#6b6f76;font-size:12px'>{ts_fmt}</span></div></div>"
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+
+    _ = key_prefix  # reserved for future per-run widgets
+    st.caption("Clinic rows for this run live in the Donut Scraper Google Sheet.")
+    st.link_button(
+        "Open in Google Sheet",
+        _donut_sheet_url(),
+        icon=":material/table_chart:",
+        use_container_width=False,
+    )
+
+
 # ── Page header ─────────────────────────────────────────────────────────────────
 st.markdown(
     "<div class='page-header-linear'>"
@@ -400,9 +439,13 @@ if not history:
     )
     st.stop()
 
-# ── Prefetch leads in bulk for all visible non-legacy runs so View Leads is instant ─────────
+# ── Split runs by tool ───────────────────────────────────────────────────────────
+leads_runs = [r for r in history if r.get("source") != "donut"]
+donut_runs = [r for r in history if r.get("source") == "donut"]
+
+# ── Prefetch leads in bulk for Find Leads runs so View Leads is instant ──────────
 _run_ids_to_fetch = []
-for r in history:
+for r in leads_runs:
     _pf_id = r.get("id")
     if _pf_id is None:
         continue
@@ -423,47 +466,67 @@ if _run_ids_to_fetch:
     except Exception:
         pass
 
-# ── Summary stats ────────────────────────────────────────────────────────────────
-total_runs   = len(history)
-total_leads  = sum(r.get("leads_found", 0) for r in history)
-total_cost   = (
-    sum(
-        estimated_google_cost(r.get("geocode_calls", 0), r.get("search_calls", 0), r.get("detail_calls", 0))
-        + estimated_outscraper_cost(r.get("outscraper_reviews", 0))
-        for r in history
-    )
-    + OUTSCRAPER_BILLING_OFFSET_USD
-)
-unique_cities = len({r.get("location", "") for r in history})
+# ── Deep-link target run (Find Leads) ────────────────────────────────────────────
+_target_run_id = st.session_state.pop("history_target_run", None)
+_target_lead_place_id = st.session_state.pop("history_target_lead_place_id", None)
 
-st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-c1, c2, c3, c4, c_refresh = st.columns([1, 1, 1, 1, 0.6])
-c1.metric("Total Runs",            total_runs)
-c2.metric("Total Leads Generated", total_leads)
-c3.metric("Unique Locations",      unique_cities)
-c4.metric("Est. Cumulative Cost",  f"${total_cost:.2f}")
-with c_refresh:
-    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-    if st.button("Refresh", help="Reload run history from database", use_container_width=True):
-        for key in list(st.session_state.keys()):
-            if key.startswith("_leads_"):
-                del st.session_state[key]
+def _refresh_button(key: str) -> None:
+    if st.button("Refresh", help="Reload run history from database", use_container_width=True, key=key):
+        for k in list(st.session_state.keys()):
+            if k.startswith("_leads_"):
+                del st.session_state[k]
         st.session_state["history_limit"] = 25
         st.cache_data.clear()
         st.rerun()
 
-st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-# ── Sync / Backfill History to Google Sheets ─────────────────────────────────────
-with st.container():
-    col_lbl, col_btn = st.columns([3.2, 1])
-    with col_lbl:
-        st.markdown(
-            ":material/info: Need to shift columns or backfill Supabase history to Google Sheets? Click Sync History."
-        )
-    with col_btn:
-        if st.button("Sync History", type="secondary", use_container_width=True, key="sync_history_to_sheets_btn"):
+def _load_more_button(key: str) -> None:
+    if len(history) >= st.session_state["history_limit"]:
+        if st.button("Load more runs", key=key):
+            st.session_state["history_limit"] += 25
+            st.rerun()
+
+
+st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+
+# ── Tabs ─────────────────────────────────────────────────────────────────────────
+tab_leads, tab_donut = st.tabs(["Find Leads", "Donut Scraper"])
+
+# ── Find Leads ────────────────────────────────────────────────────────────────────
+with tab_leads:
+    _section_banner(
+        "Find Leads — Run History",
+        "Lead-gen runs, most recent first.",
+        _C_LEADS, "rgba(58, 189, 175, 0.14)",
+    )
+
+    fl_leads = sum(r.get("leads_found", 0) for r in leads_runs)
+    fl_locs  = len({r.get("location", "") for r in leads_runs})
+    fl_cost  = sum(
+        estimated_google_cost(r.get("geocode_calls", 0), r.get("search_calls", 0), r.get("detail_calls", 0))
+        + estimated_outscraper_cost(r.get("outscraper_reviews", 0))
+        + estimated_gemini_cost(r.get("gemini_calls", 0))
+        for r in leads_runs
+    ) + OUTSCRAPER_BILLING_OFFSET_USD
+
+    c1, c2, c3, c4, c_ref = st.columns([1, 1, 1, 1, 0.6])
+    c1.metric("Total Runs",            len(leads_runs))
+    c2.metric("Total Leads Generated", fl_leads)
+    c3.metric("Unique Locations",      fl_locs)
+    c4.metric("Est. Cumulative Cost",  f"${fl_cost:.2f}")
+    with c_ref:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        _refresh_button("refresh_leads")
+
+    sc1, sc2 = st.columns(2)
+    with sc1:
+        st.link_button("Open Google Sheet", _LEADS_SHEET_URL,
+                       icon=":material/table_chart:", use_container_width=True)
+    with sc2:
+        if st.button("Sync History", type="secondary", use_container_width=True,
+                     key="sync_history_to_sheets_btn",
+                     help="Backfill Supabase history to the lead-gen Google Sheet"):
             with st.spinner("Syncing legacy history..."):
                 try:
                     from scratch.sync_sheets_backfill import run_backfill
@@ -478,21 +541,12 @@ with st.container():
                 except Exception as e:
                     st.error(f"Sync failed: {e}")
 
-st.markdown("---")
+    st.markdown("---")
 
-# ── B3 — Deep-link target run ────────────────────────────────────────────────────
-_target_run_id = st.session_state.pop("history_target_run", None)
-_target_lead_place_id = st.session_state.pop("history_target_lead_place_id", None)
-
-# ── Tabs ─────────────────────────────────────────────────────────────────────────
-tab_chrono, tab_geo = st.tabs(["Chronological", "By Location"])
-
-# ── Chronological ────────────────────────────────────────────────────────────────
-with tab_chrono:
-    st.caption("Most recent runs first.")
-
-    for i, r in enumerate(history):
-        ts      = r.get("timestamp", "")
+    if not leads_runs:
+        st.caption("No Find Leads runs yet.")
+    for i, r in enumerate(leads_runs):
+        ts       = r.get("timestamp", "")
         stopped  = r.get("stopped_early", False)
         ts_fmt   = _fmt_ts(ts)
         warn     = ":material/warning: " if stopped else ""
@@ -505,73 +559,52 @@ with tab_chrono:
         with st.expander(label, expanded=expanded):
             _render_run_expander(
                 r,
-                key_prefix=f"chrono_{i}",
-                target_lead_place_id=(_target_lead_place_id if expanded else None)
+                key_prefix=f"leads_{i}",
+                target_lead_place_id=(_target_lead_place_id if expanded else None),
             )
 
-    if len(history) >= st.session_state["history_limit"]:
-        if st.button("Load more runs", use_container_width=False, key="chrono_load_more"):
-            st.session_state["history_limit"] += 25
-            st.rerun()
+    _load_more_button("leads_load_more")
 
-# ── By Location ──────────────────────────────────────────────────────────────────
-with tab_geo:
-    st.caption("Grouped by state, then city.")
+# ── Donut Scraper ──────────────────────────────────────────────────────────────────
+with tab_donut:
+    _section_banner(
+        "Donut Scraper — Run History",
+        "Area scraper runs, most recent first.",
+        _C_DONUT, "rgba(207, 124, 63, 0.12)",
+    )
 
-    geo: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
-    for r in history:
-        state, city = _parse_location(r.get("location", ""))
-        geo[state][city].append(r)
+    dn_clinics = sum(r.get("clinics_found", 0) for r in donut_runs)
+    dn_areas   = len({r.get("location", "") for r in donut_runs})
+    dn_cost    = sum(
+        estimated_google_cost(0, r.get("search_calls", 0), 0)
+        + estimated_gemini_cost(r.get("gemini_calls", 0))
+        for r in donut_runs
+    )
 
-    for state in sorted(geo.keys()):
-        cities      = geo[state]
-        state_runs  = sum(len(runs) for runs in cities.values())
-        state_leads = sum(run.get("leads_found", 0) for runs in cities.values() for run in runs)
-        state_label = f"**{state}** — {state_runs} run{'s' if state_runs != 1 else ''}, {state_leads} leads"
+    c1, c2, c3, c4, c_ref = st.columns([1, 1, 1, 1, 0.6])
+    c1.metric("Total Runs",          len(donut_runs))
+    c2.metric("Total Clinics Found", dn_clinics)
+    c3.metric("Unique Areas",        dn_areas)
+    c4.metric("Est. Cumulative Cost", f"${dn_cost:.2f}")
+    with c_ref:
+        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+        _refresh_button("refresh_donut")
 
-        with st.expander(state_label, expanded=False):
-            for city in sorted(cities.keys()):
-                city_runs  = sorted(cities[city], key=lambda r: r.get("timestamp", ""), reverse=True)
-                city_leads = sum(r.get("leads_found", 0) for r in city_runs)
-                run_word   = "run" if len(city_runs) == 1 else "runs"
+    st.link_button("Open Google Sheet", _donut_sheet_url(),
+                   icon=":material/table_chart:", use_container_width=False)
 
-                st.markdown(
-                    f"**{city}** &nbsp;"
-                    f"<span style='font-size:12px;color:#9ca3af'>"
-                    f"{len(city_runs)} {run_word} · {city_leads} leads total"
-                    f"</span>",
-                    unsafe_allow_html=True,
-                )
+    st.markdown("---")
 
-                for j, r in enumerate(city_runs):
-                    g_cost  = estimated_google_cost(
-                        r.get("geocode_calls", 0),
-                        r.get("search_calls", 0),
-                        r.get("detail_calls", 0),
-                    )
-                    _rc_t_cost = g_cost + estimated_outscraper_cost(r.get("outscraper_reviews", 0))
-                    stopped = r.get("stopped_early", False)
-                    ts_fmt  = _fmt_ts(r.get("timestamp", ""))
+    if not donut_runs:
+        st.caption("No Donut Scraper runs recorded yet — tracking starts from now.")
+    for i, r in enumerate(donut_runs):
+        ts_fmt  = _fmt_ts(r.get("timestamp", ""))
+        gem_tag = "  ·  AI extraction" if r.get("gemini_calls", 0) else ""
+        label   = f"{r.get('location', 'Unknown area')} — {r.get('clinics_found', 0)} clinics · {ts_fmt}{gem_tag}"
+        with st.expander(label, expanded=False):
+            _render_donut_run_expander(r, key_prefix=f"donut_{i}")
 
-                    rc = st.columns([3, 1, 1, 1, 1, 1])
-                    rc[0].markdown(
-                        f"{':material/warning: ' if stopped else ''}{ts_fmt}"
-                        + (" *(stopped)*" if stopped else "")
-                    )
-                    rc[1].metric("Leads",    r.get("leads_found", 0))
-                    rc[2].metric("Clinics",  r.get("clinics_found", 0))
-                    rc[3].metric("Searches", r.get("search_calls", 0))
-                    rc[4].metric("Details",  r.get("detail_calls", 0))
-                    rc[5].metric("Cost",     f"${_rc_t_cost:.3f}")
-
-                    # Per-run expander with leads / export / sheets
-                    run_ts_fmt = _fmt_ts(r.get("timestamp", ""))
-                    _r_pfc     = r.get("pattern_fallback_count")
-                    _r_ai_tag  = "  ·  pattern matching" if _r_pfc is None else ("  ·  pattern fallback" if _r_pfc else "")
-                    with st.expander(f"Details & Leads — {run_ts_fmt}{_r_ai_tag}", expanded=False):
-                        _render_run_expander(r, key_prefix=f"geo_{state}_{city}_{j}")
-
-                st.markdown("---")
+    _load_more_button("donut_load_more")
 
 # ── Test Runs Log collapsible section ──────────────────────────────────────────
 import os
