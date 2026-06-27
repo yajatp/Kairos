@@ -346,22 +346,23 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
 
     m.add_child(_ImperialScale())
 
-    Draw(
-        export=False,
-        position="topleft",
-        draw_options={
-            "polygon": {
-                "allowIntersection": False,
-                "shapeOptions": {"color": "#183e34", "weight": 2, "fillOpacity": 0.08},
+    if not p.get("clinics"):
+        Draw(
+            export=False,
+            position="topleft",
+            draw_options={
+                "polygon": {
+                    "allowIntersection": False,
+                    "shapeOptions": {"color": "#183e34", "weight": 2, "fillOpacity": 0.08},
+                },
+                "polyline": False,
+                "rectangle": False,
+                "circle": False,
+                "marker": False,
+                "circlemarker": False,
             },
-            "polyline": False,
-            "rectangle": False,
-            "circle": False,
-            "marker": False,
-            "circlemarker": False,
-        },
-        edit_options={"edit": False, "remove": False},
-    ).add_to(m)
+            edit_options={"edit": False, "remove": False},
+        ).add_to(m)
 
     # Movable ruler — click points to measure real distance/area on the map
     MeasureControl(
@@ -407,11 +408,18 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
             lat = c.get("lat")
             lng = c.get("lng")
             if lat and lng:
-                color = "green" if c.get("inclusion_zone") == "core" else "gray"
-                folium.Marker(
+                is_core = c.get("inclusion_zone") == "core"
+                color = "#183e34" if is_core else "#4b5563"
+                fill_color = "#3abdaf" if is_core else "#9ca3af"
+                folium.CircleMarker(
                     location=[lat, lng],
+                    radius=6,
                     tooltip=c.get("name", "Unknown Clinic"),
-                    icon=folium.Icon(color=color, icon="plus", prefix="fa")
+                    color=color,
+                    fill=True,
+                    fill_color=fill_color,
+                    fill_opacity=0.8,
+                    weight=1.5,
                 ).add_to(fg)
         fg.add_to(m)
 
@@ -427,10 +435,13 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
         st_kwargs["zoom"] = 12
         p["applied_search_center"] = search_center
 
+    map_key = f"donut_map_results_{p.get('map_nonce', 0)}" if clinics else f"donut_draw_map_{p.get('map_nonce', 0)}"
+    returned_objs = [] if clinics else ["last_active_drawing"]
+
     result = st_folium(
         m, width="100%", height=440,
-        key=f"donut_draw_map_{p.get('map_nonce', 0)}",
-        returned_objects=["last_active_drawing"],
+        key=map_key,
+        returned_objects=returned_objs,
         **st_kwargs,
     )
 
