@@ -472,6 +472,26 @@ _target_lead_place_id = st.session_state.pop("history_target_lead_place_id", Non
 
 
 def _refresh_button(key: str) -> None:
+    # Inject CSS once using the key to avoid duplication (though it will render twice, Streamlit dedups <style>)
+    st.markdown("""
+        <style>
+        div[data-testid="column"]:nth-of-type(5) button {
+            height: 78px;
+            border-radius: 12px;
+            border: 1px dashed #cbd5e1;
+            background-color: transparent;
+            color: #64748b;
+            font-weight: 500;
+            transition: all 0.2s ease;
+            margin-top: -4px; /* Slight adjustment to align perfectly with metric top */
+        }
+        div[data-testid="column"]:nth-of-type(5) button:hover {
+            border: 1px solid #183e34;
+            color: #183e34;
+            background-color: #f1f5f9;
+        }
+        </style>
+    """, unsafe_allow_html=True)
     if st.button("Refresh", help="Reload run history from database", use_container_width=True, key=key):
         for k in list(st.session_state.keys()):
             if k.startswith("_leads_"):
@@ -516,7 +536,6 @@ with tab_leads:
     c3.metric("Unique Locations",      fl_locs)
     c4.metric("Est. Cumulative Cost",  f"${fl_cost:.2f}")
     with c_ref:
-        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
         _refresh_button("refresh_leads")
 
     sc1, sc2 = st.columns(2)
@@ -587,7 +606,6 @@ with tab_donut:
     c3.metric("Unique Areas",        dn_areas)
     c4.metric("Est. Cumulative Cost", f"${dn_cost:.2f}")
     with c_ref:
-        st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
         _refresh_button("refresh_donut")
 
     st.link_button("Open Google Sheet", _donut_sheet_url(),
