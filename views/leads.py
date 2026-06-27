@@ -771,9 +771,8 @@ with st.sidebar:
 
     _map_data = st_folium(
         _m,
-        width=260,
-        height=260,
-        use_container_width=False,
+        height=220,
+        use_container_width=True,
         returned_objects=["last_clicked", "zoom"],
         key=_dynamic_map_key,
     )
