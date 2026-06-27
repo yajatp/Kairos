@@ -471,28 +471,33 @@ _target_run_id = st.session_state.pop("history_target_run", None)
 _target_lead_place_id = st.session_state.pop("history_target_lead_place_id", None)
 
 
-def _refresh_button(key: str) -> None:
-    # Inject CSS once using the key to avoid duplication (though it will render twice, Streamlit dedups <style>)
-    st.markdown("""
+def _refresh_button(key: str, accent: str) -> None:
+    # Scope styling via Streamlit's generated `st-key-<key>` class so it can't leak
+    # to other buttons. Dashed/tinted look reads as an action next to the plain
+    # metric values; height matches the metric block (columns are bottom-aligned).
+    st.markdown(
+        f"""
         <style>
-        div[data-testid="column"]:nth-of-type(5) button {
-            height: 78px;
-            border-radius: 12px;
-            border: 1px dashed #cbd5e1;
-            background-color: transparent;
-            color: #64748b;
-            font-weight: 500;
-            transition: all 0.2s ease;
-            margin-top: -4px; /* Slight adjustment to align perfectly with metric top */
-        }
-        div[data-testid="column"]:nth-of-type(5) button:hover {
-            border: 1px solid #183e34;
-            color: #183e34;
-            background-color: #f1f5f9;
-        }
+        .st-key-{key} button {{
+            height: 72px;
+            border-radius: 10px;
+            border: 1px dashed {accent}66;
+            background: {accent}0d;
+            color: {accent};
+            font-weight: 600;
+            transition: all 0.15s ease;
+        }}
+        .st-key-{key} button:hover {{
+            border: 1px solid {accent};
+            background: {accent}1a;
+            color: {accent};
+        }}
         </style>
-    """, unsafe_allow_html=True)
-    if st.button("Refresh", help="Reload run history from database", use_container_width=True, key=key):
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button(":material/refresh: Refresh", help="Reload run history from database",
+                 use_container_width=True, key=key):
         for k in list(st.session_state.keys()):
             if k.startswith("_leads_"):
                 del st.session_state[k]
@@ -530,13 +535,13 @@ with tab_leads:
         for r in leads_runs
     ) + OUTSCRAPER_BILLING_OFFSET_USD
 
-    c1, c2, c3, c4, c_ref = st.columns([1, 1, 1, 1, 0.6])
+    c1, c2, c3, c4, c_ref = st.columns([1, 1, 1, 1, 0.6], vertical_alignment="bottom")
     c1.metric("Total Runs",            len(leads_runs))
     c2.metric("Total Leads Generated", fl_leads)
     c3.metric("Unique Locations",      fl_locs)
     c4.metric("Est. Cumulative Cost",  f"${fl_cost:.2f}")
     with c_ref:
-        _refresh_button("refresh_leads")
+        _refresh_button("refresh_leads", _C_LEADS)
 
     sc1, sc2 = st.columns(2)
     with sc1:
@@ -600,13 +605,13 @@ with tab_donut:
         for r in donut_runs
     )
 
-    c1, c2, c3, c4, c_ref = st.columns([1, 1, 1, 1, 0.6])
+    c1, c2, c3, c4, c_ref = st.columns([1, 1, 1, 1, 0.6], vertical_alignment="bottom")
     c1.metric("Total Runs",          len(donut_runs))
     c2.metric("Total Clinics Found", dn_clinics)
     c3.metric("Unique Areas",        dn_areas)
     c4.metric("Est. Cumulative Cost", f"${dn_cost:.2f}")
     with c_ref:
-        _refresh_button("refresh_donut")
+        _refresh_button("refresh_donut", _C_DONUT)
 
     st.link_button("Open Google Sheet", _donut_sheet_url(),
                    icon=":material/table_chart:", use_container_width=False)
