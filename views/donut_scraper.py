@@ -400,6 +400,21 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
             class_name="ds-core-poly",
         ).add_to(m)
 
+    clinics = p.get("clinics")
+    if clinics:
+        fg = folium.FeatureGroup(name="Dental Clinics")
+        for c in clinics:
+            lat = c.get("lat")
+            lng = c.get("lng")
+            if lat and lng:
+                color = "green" if c.get("inclusion_zone") == "core" else "gray"
+                folium.Marker(
+                    location=[lat, lng],
+                    tooltip=c.get("name", "Unknown Clinic"),
+                    icon=folium.Icon(color=color, icon="plus", prefix="fa")
+                ).add_to(fg)
+        fg.add_to(m)
+
     # Nonce in the key lets the Clear button reset st_folium so a stale
     # last_active_drawing can't repopulate the polygon after deletion.
     # Pass center/zoom only when the search result actually changed, so the map
