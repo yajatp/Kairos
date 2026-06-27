@@ -227,7 +227,7 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
     exp_c1, exp_c2, exp_c3 = st.columns([1, 1, 1])
     with exp_c1:
         st.button(
-            "View Leads",
+            "Hide Leads" if st.session_state.get(view_key, False) else "View Leads",
             key=f"{key_prefix}_btn_view",
             on_click=toggle_view_leads,
             args=(view_key,),
@@ -441,7 +441,7 @@ def _render_donut_run_expander(r: dict, key_prefix: str) -> None:
     dn_c1, dn_c2, dn_c3 = st.columns([1, 1, 1])
     with dn_c1:
         st.button(
-            "View Dentists",
+            "Hide Dentists" if st.session_state.get(view_key, False) else "View Dentists",
             key=f"{key_prefix}_btn_view",
             on_click=toggle_view_leads,
             args=(view_key,),
