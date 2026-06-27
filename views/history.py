@@ -399,14 +399,27 @@ def _render_donut_run_expander(r: dict, key_prefix: str) -> None:
         unsafe_allow_html=True,
     )
 
-    _ = key_prefix  # reserved for future per-run widgets
-    st.caption("Clinic rows for this run live in the Donut Scraper Google Sheet.")
-    st.link_button(
-        "Open in Google Sheet",
-        _donut_sheet_url(),
-        icon=":material/table_chart:",
-        use_container_width=False,
-    )
+    st.markdown("---")
+
+    dn_c1, dn_c2, dn_c3 = st.columns([1, 1, 1])
+    with dn_c1:
+        st.button(
+            "View Dentists",
+            key=f"{key_prefix}_btn_view",
+            disabled=True,
+            use_container_width=True,
+            help="Dentist rows for this run are saved directly to the Google Sheet",
+        )
+    with dn_c2:
+        st.link_button(
+            "Open Google Sheet",
+            _donut_sheet_url(),
+            icon=":material/table_chart:",
+            use_container_width=True,
+        )
+    with dn_c3:
+        with st.popover("Export", use_container_width=True):
+            st.caption("Dentist data for this run lives in the Google Sheet — open it to download.")
 
 
 # ── Page header ─────────────────────────────────────────────────────────────────
