@@ -478,9 +478,16 @@ def _refresh_button(key: str, accent: str) -> None:
     st.markdown(
         f"""
         <style>
+        /* Stretch the refresh column to the metric row's height so the button matches
+           the metric cards exactly, regardless of their padding/font. min-height is a
+           fallback for browsers without :has(). */
+        [data-testid="column"]:has(.st-key-{key}) {{ align-self: stretch; }}
+        [data-testid="column"]:has(.st-key-{key}) > div[data-testid="stVerticalBlock"] {{ height: 100%; }}
+        .st-key-{key} {{ height: 100%; }}
         .st-key-{key} button {{
-            height: 72px;
-            border-radius: 10px;
+            min-height: 78px;
+            height: 100%;
+            border-radius: 8px;
             border: 1px dashed {accent}66;
             background: {accent}0d;
             color: {accent};
