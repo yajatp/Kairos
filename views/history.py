@@ -359,9 +359,25 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
                 st.components.v1.html(scroll_js, height=0, width=0)
 
 
+_DONUT_DISPLAY_COLS = [
+    "Clinic Name", "Classification", "Inclusion Zone", "Phone Number", "Email",
+    "Head Dentist / Key Staff", "Address", "Website",
+    "Hours - Monday", "Hours - Tuesday", "Hours - Wednesday", "Hours - Thursday",
+    "Hours - Friday", "Hours - Saturday", "Hours - Sunday", "Notes", "Place ID",
+]
+
+
+def _donut_records_to_df(records: list[dict]) -> pd.DataFrame:
+    """Sheet records (keyed by OUTPUT_HEADERS) to a tidy display/export DataFrame."""
+    if not records:
+        return pd.DataFrame()
+    rows = [{c: rec.get(c, "") for c in _DONUT_DISPLAY_COLS} for rec in records]
+    return pd.DataFrame(rows)
+
+
 def _render_donut_run_expander(r: dict, key_prefix: str) -> None:
-    """Render a single Donut Scraper run. Donut clinic rows live in the Google Sheet,
-    not Supabase, so this shows the run summary + a link to the sheet (no View Leads)."""
+    """Render a single Donut Scraper run. Donut dentist rows live in the Google
+    Sheet (not Supabase), so View Dentists/Export read them back by Run Date + area."""
     ts       = r.get("timestamp", "")
     search_c = r.get("search_calls", 0)
     gem_c    = r.get("gemini_calls", 0)
@@ -401,25 +417,109 @@ def _render_donut_run_expander(r: dict, key_prefix: str) -> None:
 
     st.markdown("---")
 
+    location  = r.get("location", "") or "Donut area"
+    run_date  = _fmt_ts(ts, "%Y-%m-%d")
+    view_key  = f"{key_prefix}_view_dentists"
+    cache_key = f"_donut_{key_prefix}_{ts}"
+    fname_base = (
+        f"kairos_donut_{location.replace(' ', '_').replace(',', '')}_{datetime.now().strftime('%Y%m%d')}"
+    )
+
+    if st.session_state.get(view_key, False) and cache_key not in st.session_state:
+        with st.spinner("Loading dentists..."):
+            try:
+                from utils.donut_sheets import get_donut_clinics_for_run
+                st.session_state[cache_key] = get_donut_clinics_for_run(location, run_date)
+            except Exception:
+                st.warning("Connection issue — click View Dentists again to retry.")
+                st.session_state[view_key] = False
+                st.stop()
+
+    records   = st.session_state.get(cache_key, [])
+    dentists_df = _donut_records_to_df(records)
+
     dn_c1, dn_c2, dn_c3 = st.columns([1, 1, 1])
     with dn_c1:
         st.button(
             "View Dentists",
             key=f"{key_prefix}_btn_view",
-            disabled=True,
+            on_click=toggle_view_leads,
+            args=(view_key,),
             use_container_width=True,
-            help="Dentist rows for this run are saved directly to the Google Sheet",
         )
     with dn_c2:
-        st.link_button(
-            "Open Google Sheet",
-            _donut_sheet_url(),
-            icon=":material/table_chart:",
-            use_container_width=True,
-        )
+        sheets_state_key = f"{key_prefix}_sheets_result"
+        if dentists_df.empty:
+            st.button("Add to Sheet", disabled=True, use_container_width=True, key=f"{key_prefix}_btn_sheets")
+            st.caption("Click 'View Dentists' to load data")
+        else:
+            if st.button("Add to Sheet", key=f"{key_prefix}_btn_sheets", use_container_width=True):
+                from utils.donut_sheets import append_donut_clinics_to_sheet
+                tab = records[0].get("Area / Tab Name", "") if records else ""
+                st.session_state[sheets_state_key] = append_donut_clinics_to_sheet(records, tab or location)
     with dn_c3:
         with st.popover("Export", use_container_width=True):
-            st.caption("Dentist data for this run lives in the Google Sheet — open it to download.")
+            if not dentists_df.empty:
+                st.download_button(
+                    "CSV",
+                    data=dentists_df.to_csv(index=False),
+                    file_name=f"{fname_base}.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"{key_prefix}_csv",
+                )
+                try:
+                    from utils.export import df_to_xlsx_bytes
+                    st.download_button(
+                        "XLSX",
+                        data=df_to_xlsx_bytes(dentists_df),
+                        file_name=f"{fname_base}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                        key=f"{key_prefix}_xlsx",
+                    )
+                except Exception:
+                    pass
+                st.markdown("---")
+                contacts = dentists_df[["Clinic Name", "Phone Number", "Email", "Address"]].copy()
+                st.download_button(
+                    "Phones & Emails",
+                    data=contacts.to_csv(index=False),
+                    file_name=f"{fname_base}_contacts.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    key=f"{key_prefix}_contacts",
+                )
+            else:
+                st.caption("Click 'View Dentists' to load data")
+
+    sheets_result = st.session_state.get(f"{key_prefix}_sheets_result")
+    if sheets_result is not None:
+        if "error" in sheets_result:
+            if sheets_result["error"] == "Sheets not configured":
+                st.info("Google Sheets not configured — add `GOOGLE_SERVICE_ACCOUNT_JSON` to secrets.")
+            else:
+                st.error(f"Sheets error: {sheets_result['error']}")
+        else:
+            added   = sheets_result.get("added", 0)
+            skipped = sheets_result.get("skipped", 0)
+            tab     = sheets_result.get("tab", "")
+            if added == 0 and skipped > 0:
+                st.success(f"All {skipped} dentists already in sheet → {tab}")
+            else:
+                st.success(f"Added {added} dentists to {tab}" + (f" ({skipped} skipped)" if skipped else ""))
+
+    if st.session_state.get(view_key, False):
+        st.markdown("---")
+        if dentists_df.empty:
+            st.info(
+                "No dentist rows found in the Google Sheet for this run "
+                f"(matched on Run Date {run_date} + area). The sheet may have been edited, "
+                "or this run predates sheet tracking."
+            )
+        else:
+            st.caption(f"{len(dentists_df)} dentists for this run")
+            st.dataframe(dentists_df, use_container_width=True, hide_index=True)
 
 
 # ── Page header ─────────────────────────────────────────────────────────────────

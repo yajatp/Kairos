@@ -340,6 +340,104 @@ def write_run_to_sheet(
     }
 
 
+def get_donut_clinics_for_run(location: str, run_date_iso: str) -> list[dict]:
+    """Read dentist rows for one Donut run back from the Google Sheet.
+
+    Donut clinics aren't stored per-run in Supabase — only in the Donut Sheet,
+    keyed by Run Date + area tab. Match on Run Date, preferring the tab whose
+    name corresponds to the run's location; fall back to all rows on that date.
+    Each returned dict is keyed by ``OUTPUT_HEADERS``.
+    """
+    from utils.sheets import get_sheets_client
+
+    client = get_sheets_client()
+    if client is None:
+        return []
+    try:
+        ss = _get_or_create_donut_spreadsheet(client)
+    except Exception as e:
+        logger.warning("Could not open Donut sheet for read: %s", e)
+        return []
+
+    loc = (location or "").strip().lower()
+    preferred: list[dict] = []
+    fallback: list[dict] = []
+    for ws in ss.worksheets():
+        title = ws.title
+        if title == _AREA_INDEX_TAB:
+            continue
+        try:
+            records = ws.get_all_records()
+        except Exception:
+            continue
+        tab_match = bool(loc) and (loc in title.lower() or title.lower() in loc)
+        for rec in records:
+            if str(rec.get("Run Date", "")).strip() != run_date_iso:
+                continue
+            (preferred if tab_match else fallback).append(rec)
+    return preferred or fallback
+
+
+def append_donut_clinics_to_sheet(records: list[dict], tab_name: str) -> dict:
+    """Idempotently append donut dentist rows to their area tab, dedup by Place ID.
+
+    Mirrors ``append_leads_to_sheet``: existing rows are kept, only missing Place
+    IDs are added. Returns ``{"added": N, "skipped": M, "tab": tab_name}``.
+    """
+    from utils.sheets import get_sheets_client
+
+    client = get_sheets_client()
+    if client is None:
+        return {"added": 0, "skipped": 0, "tab": tab_name, "error": "Sheets not configured"}
+    if not records:
+        return {"added": 0, "skipped": 0, "tab": tab_name}
+
+    tab_name = (tab_name or "").strip()[:50] or "Donut Run"
+    pid_idx = OUTPUT_HEADERS.index("Place ID")
+    try:
+        ss = _get_or_create_donut_spreadsheet(client)
+        try:
+            ws = ss.worksheet(tab_name)
+        except Exception:
+            ws = ss.add_worksheet(
+                title=tab_name,
+                rows=max(len(records) + 20, 100),
+                cols=len(OUTPUT_HEADERS) + 2,
+            )
+            ws.append_row(OUTPUT_HEADERS, value_input_option="RAW")
+
+        existing_values = ws.get_all_values()
+        existing_rows = existing_values[1:] if len(existing_values) > 1 else []
+        merged: dict[str, list] = {}
+        order: list[str] = []
+        for row in existing_rows:
+            if len(row) > pid_idx and str(row[pid_idx]).strip():
+                pid = str(row[pid_idx]).strip()
+                if pid not in merged:
+                    order.append(pid)
+                merged[pid] = row
+
+        added = skipped = 0
+        for rec in records:
+            pid = str(rec.get("Place ID", "")).strip()
+            if not pid:
+                continue
+            if pid in merged:
+                skipped += 1
+                continue
+            merged[pid] = [str(rec.get(h, "")) for h in OUTPUT_HEADERS]
+            order.append(pid)
+            added += 1
+
+        all_rows = [merged[p] for p in order]
+        ws.clear()
+        ws.update([OUTPUT_HEADERS] + all_rows, value_input_option="USER_ENTERED")
+        return {"added": added, "skipped": skipped, "tab": tab_name}
+    except Exception as e:
+        logger.warning("append_donut_clinics_to_sheet failed: %s", e)
+        return {"added": 0, "skipped": 0, "tab": tab_name, "error": str(e)}
+
+
 def get_saved_areas() -> list[dict]:
     """Return list of saved area records from _area_index for the re-run dropdown."""
     from utils.sheets import get_sheets_client
