@@ -47,7 +47,15 @@ OUTPUT_HEADERS = [
     "Hours - Saturday",
     "Hours - Sunday",
     "Notes",
+    # Blank trailing columns for manual outreach tracking. "Outreach Notes" rather
+    # than "Notes" to avoid colliding with the auto-filled Notes column above.
+    "Status",
+    "Outreach Notes",
+    "Last Contacted",
+    "Follow-up Date",
+    "Outcome",
 ]
+_MANUAL_OUTREACH_COLS = ["Status", "Outreach Notes", "Last Contacted", "Follow-up Date", "Outcome"]
 
 
 def _get_or_create_donut_spreadsheet(client):
@@ -226,6 +234,7 @@ def _build_output_rows(
         for day in _DAYS:
             row.append(hours.get(day, ""))
         row.append(c.get("notes", ""))
+        row.extend("" for _ in _MANUAL_OUTREACH_COLS)
         rows.append(row)
 
     return rows
@@ -340,13 +349,12 @@ def write_run_to_sheet(
     }
 
 
-def get_donut_clinics_for_run(location: str, run_date_iso: str) -> list[dict]:
-    """Read dentist rows for one Donut run back from the Google Sheet.
+def get_all_donut_worksheet_records() -> list[tuple[str, list[dict]]]:
+    """Read every area tab's rows once (excludes ``_area_index``).
 
-    Donut clinics aren't stored per-run in Supabase — only in the Donut Sheet,
-    keyed by Run Date + area tab. Match on Run Date, preferring the tab whose
-    name corresponds to the run's location; fall back to all rows on that date.
-    Each returned dict is keyed by ``OUTPUT_HEADERS``.
+    Returns ``(tab_title, records)`` pairs. Used for bulk prefetch so a History
+    page with many Donut runs reads the sheet a single time instead of once per
+    run; pair with :func:`match_donut_run_records` to slice out a single run.
     """
     from utils.sheets import get_sheets_client
 
@@ -356,26 +364,49 @@ def get_donut_clinics_for_run(location: str, run_date_iso: str) -> list[dict]:
     try:
         ss = _get_or_create_donut_spreadsheet(client)
     except Exception as e:
-        logger.warning("Could not open Donut sheet for read: %s", e)
+        logger.warning("Could not open Donut sheet for bulk read: %s", e)
         return []
 
+    out: list[tuple[str, list[dict]]] = []
+    for ws in ss.worksheets():
+        if ws.title == _AREA_INDEX_TAB:
+            continue
+        try:
+            out.append((ws.title, ws.get_all_records()))
+        except Exception:
+            continue
+    return out
+
+
+def match_donut_run_records(
+    all_ws: list[tuple[str, list[dict]]], location: str, run_date_iso: str
+) -> list[dict]:
+    """Slice the rows for one run out of already-read worksheet records.
+
+    Match on Run Date, preferring the tab whose name corresponds to the run's
+    location; fall back to all rows on that date.
+    """
     loc = (location or "").strip().lower()
     preferred: list[dict] = []
     fallback: list[dict] = []
-    for ws in ss.worksheets():
-        title = ws.title
-        if title == _AREA_INDEX_TAB:
-            continue
-        try:
-            records = ws.get_all_records()
-        except Exception:
-            continue
+    for title, records in all_ws:
         tab_match = bool(loc) and (loc in title.lower() or title.lower() in loc)
         for rec in records:
             if str(rec.get("Run Date", "")).strip() != run_date_iso:
                 continue
             (preferred if tab_match else fallback).append(rec)
     return preferred or fallback
+
+
+def get_donut_clinics_for_run(location: str, run_date_iso: str) -> list[dict]:
+    """Read dentist rows for one Donut run back from the Google Sheet.
+
+    Donut clinics aren't stored per-run in Supabase — only in the Donut Sheet,
+    keyed by Run Date + area tab. Each returned dict is keyed by ``OUTPUT_HEADERS``.
+    """
+    return match_donut_run_records(
+        get_all_donut_worksheet_records(), location, run_date_iso
+    )
 
 
 def append_donut_clinics_to_sheet(records: list[dict], tab_name: str) -> dict:

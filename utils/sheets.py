@@ -13,6 +13,10 @@ logger = logging.getLogger(__name__)
 
 SPREADSHEET_ID = "1UlBdK2z7UsP-_IFYhxK5IImmHCOGFKKvaGHUDw_dXHs"
 
+# Blank trailing columns for manual outreach tracking. "Outreach Notes" rather than
+# "Notes" to avoid colliding with the auto-filled Notes column above.
+_MANUAL_OUTREACH_COLS = ["Status", "Outreach Notes", "Last Contacted", "Follow-up Date", "Outcome"]
+
 _STATE_NAMES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
     "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
@@ -134,7 +138,7 @@ def append_leads_to_sheet(
             "LinkedIn", "Number of Locations", "Pain Signal Type", "Evidence / Source", "Pain Score",
             "Outreach Angle", "Notes", "Google Rating", "Total Reviews", "Hours Summary", "Extended Hours",
             "Online Booking", "Review Data Depth", "Review Method", "Run Errors", "reviews_json"
-        ]
+        ] + _MANUAL_OUTREACH_COLS
 
         ws = _get_or_create_worksheet(spreadsheet, tab_name, headers)
 
@@ -211,7 +215,7 @@ def append_leads_to_sheet(
                 row.get("Review Method", row.get("review_method", "")),
                 row.get("Run Errors", row.get("run_errors", "")),
                 row.get("reviews_json", ""),
-            ]
+            ] + [row.get(_mc, "") for _mc in _MANUAL_OUTREACH_COLS]
 
             if pid in merged_data:
                 skipped += 1

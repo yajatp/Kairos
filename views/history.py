@@ -18,6 +18,9 @@ _C_DONUT = "#b9692f"   # warm amber
 
 _LEADS_SHEET_URL = "https://docs.google.com/spreadsheets/d/1UlBdK2z7UsP-_IFYhxK5IImmHCOGFKKvaGHUDw_dXHs"
 
+# Blank columns appended to the Phones & Emails exports for manual outreach tracking.
+_MANUAL_OUTREACH_COLS = ["Status", "Notes", "Last Contacted", "Follow-up Date", "Outcome"]
+
 
 def _donut_sheet_url() -> str:
     import os
@@ -269,6 +272,8 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
                     pass
                 st.markdown("---")
                 phones_emails = leads_df[["Clinic Name", "Phone Number", "Contact Email", "Address"]].copy()
+                for _mc in _MANUAL_OUTREACH_COLS:
+                    phones_emails[_mc] = ""
                 st.download_button(
                     "Phones & Emails",
                     data=phones_emails.to_csv(index=False),
@@ -482,6 +487,8 @@ def _render_donut_run_expander(r: dict, key_prefix: str) -> None:
                     pass
                 st.markdown("---")
                 contacts = dentists_df[["Clinic Name", "Phone Number", "Email", "Address"]].copy()
+                for _mc in _MANUAL_OUTREACH_COLS:
+                    contacts[_mc] = ""
                 st.download_button(
                     "Phones & Emails",
                     data=contacts.to_csv(index=False),
@@ -619,7 +626,7 @@ def _refresh_button(key: str, accent: str) -> None:
     if st.button(":material/refresh: Refresh", help="Reload run history from database",
                  use_container_width=True, key=key):
         for k in list(st.session_state.keys()):
-            if k.startswith("_leads_"):
+            if k.startswith("_leads_") or k.startswith("_donut_"):
                 del st.session_state[k]
         st.session_state["history_limit"] = 25
         st.cache_data.clear()
@@ -737,6 +744,33 @@ with tab_donut:
                    icon=":material/table_chart:", use_container_width=False)
 
     st.markdown("---")
+
+    # ── Prefetch dentist rows in bulk so Export / Add to Sheet work without
+    #    first clicking View Dentists (matches the Find Leads tab's behavior).
+    #    Cache keys here must mirror those built in _render_donut_run_expander.
+    _donut_to_prefetch = []
+    for _i, _r in enumerate(donut_runs):
+        _dts = _r.get("timestamp", "")
+        _dkey = f"_donut_donut_{_i}_{_dts}"
+        if _dkey in st.session_state:
+            continue
+        if _r.get("clinics_found", 0) == 0:
+            st.session_state[_dkey] = []
+            continue
+        _donut_to_prefetch.append((_r, _dkey))
+    if _donut_to_prefetch:
+        try:
+            from utils.donut_sheets import (
+                get_all_donut_worksheet_records,
+                match_donut_run_records,
+            )
+            _all_ws = get_all_donut_worksheet_records()
+            for _r, _dkey in _donut_to_prefetch:
+                _loc = _r.get("location", "") or "Donut area"
+                _rdate = _fmt_ts(_r.get("timestamp", ""), "%Y-%m-%d")
+                st.session_state[_dkey] = match_donut_run_records(_all_ws, _loc, _rdate)
+        except Exception:
+            pass
 
     if not donut_runs:
         st.caption("No Donut Scraper runs recorded yet — tracking starts from now.")
