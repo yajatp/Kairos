@@ -234,6 +234,20 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return 2 * R * math.asin(math.sqrt(a))
 
 
+def _name_core(name: str) -> str:
+    """Strip noise from a listing name leaving only the distinctive tokens.
+
+    Removes Dr. prefix, credentials, and generic business suffix words so that
+    "ABC Dental Center" and "ABC Dentistry" both reduce to "abc", allowing
+    same-building name-similarity matching without phone/domain signals.
+    """
+    s = _DR_PREFIX_RE.sub("", name.strip().lower())
+    s = _CREDENTIAL_RE.sub("", s)
+    s = _BUSINESS_SUFFIXES.sub("", s)
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
 def _entry(clinic: dict) -> dict:
     """Classify one listing and precompute the keys dedup matches on."""
     name = clinic.get("name", "")
@@ -256,6 +270,7 @@ def _entry(clinic: dict) -> dict:
         "phone10": _digits(clinic.get("phone", ""))[:10],
         "suite": _suite_token(addr),
         "domain": _domain(clinic.get("website", "")),
+        "name_core": _name_core(name),
         "bk": _building_key(addr) if addr else "",
         "lat": _to_float(clinic.get("lat")),
         "lng": _to_float(clinic.get("lng")),
@@ -311,10 +326,13 @@ def deduplicate_clinics(clinics: list[dict]) -> list[dict]:
                 <= GEO_SAME_BUILDING_M
             )
             same_bldg = same_text_bldg or geo_close
+            nc = mi["name_core"]
+            same_name_core = bool(nc) and nc == mj["name_core"] and len(nc) >= 4
             if (
                 local_ph
                 or (same_bldg and same_dom)
                 or (same_text_bldg and same_ste)
+                or (same_bldg and same_name_core)
             ):
                 _union(i, j)
 

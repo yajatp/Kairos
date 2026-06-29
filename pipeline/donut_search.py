@@ -122,7 +122,7 @@ def _nearby_search_page(
             # Place Details call afterward (one search call returns everything).
             "X-Goog-FieldMask": (
                 "places.id,places.displayName,places.formattedAddress,"
-                "places.location,places.businessStatus,"
+                "places.location,places.businessStatus,places.primaryType,"
                 "places.nationalPhoneNumber,places.websiteUri,"
                 "places.regularOpeningHours"
             ),
@@ -152,6 +152,8 @@ def _search_one_circle(lat: float, lng: float, radius_m: float, api_key: str) ->
 
     for place in data.get("places", []):
         if place.get("businessStatus") == "CLOSED_PERMANENTLY":
+            continue
+        if place.get("primaryType") != "dentist":
             continue
         loc = place.get("location", {})
         results.append({
