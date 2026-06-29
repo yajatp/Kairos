@@ -28,6 +28,35 @@ class _ImperialScale(MacroElement):
         """
     )
 
+
+class _ZoomLabels(MacroElement):
+    """Auto-show permanent marker labels (CSS class ``ds-zoom-label``) once the
+    map is zoomed in past ``min_zoom``. The zoomend listener is baked into the
+    map init — reliable under st_folium, unlike an injected <script> tag."""
+
+    _name = "ZoomLabels"
+
+    def __init__(self, min_zoom: int = 16):
+        super().__init__()
+        self.min_zoom = min_zoom
+        self._template = Template(
+            """
+            {% macro script(this, kwargs) %}
+            (function(){
+                var map = {{ this._parent.get_name() }};
+                var thr = {{ this.min_zoom }};
+                function _upd(){
+                    var el = map.getContainer();
+                    if (map.getZoom() >= thr) { el.classList.add('ds-show-labels'); }
+                    else { el.classList.remove('ds-show-labels'); }
+                }
+                map.on('zoomend', _upd);
+                _upd();
+            })();
+            {% endmacro %}
+            """
+        )
+
 from pipeline.donut_search import (
     CIRCLE_WARNING_THRESHOLD,
     adaptive_buffer_miles,
@@ -300,7 +329,7 @@ def _geocode_for_map(location_str: str, api_key: str):
         return None
 
 
-def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
+def _render_draw_map(buffer_miles: float = 0.0, zone_filter: str = "All") -> list[list[float]] | None:
     """Render the Folium draw map. Returns polygon coords [[lng, lat], ...] or None."""
     p = st.session_state._donut_pipeline
 
@@ -403,6 +432,23 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
 
     clinics = p.get("clinics")
     if clinics:
+        if zone_filter == "Core only":
+            clinics = [c for c in clinics if c.get("inclusion_zone") == "core"]
+        elif zone_filter == "Buffer only":
+            clinics = [c for c in clinics if c.get("inclusion_zone") == "buffer"]
+
+        # Labels (permanent tooltips) hidden until zoomed in; toggled by _ZoomLabels.
+        m.get_root().html.add_child(folium.Element(
+            "<style>"
+            ".leaflet-tooltip.ds-zoom-label{display:none;background:#183e34;color:#fff;"
+            "border:none;border-radius:4px;box-shadow:0 1px 3px rgba(0,0,0,0.3);"
+            "font-weight:600;font-size:11px;padding:2px 6px;}"
+            ".leaflet-tooltip.ds-zoom-label:before{display:none;}"
+            ".ds-show-labels .leaflet-tooltip.ds-zoom-label{display:block;}"
+            "</style>"
+        ))
+        m.add_child(_ZoomLabels(min_zoom=16))
+
         pts: list[list[float]] = []
         for c in clinics:
             lat = c.get("lat")
@@ -415,7 +461,8 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
                 folium.CircleMarker(
                     location=[lat, lng],
                     radius=6,
-                    tooltip=name,
+                    tooltip=folium.Tooltip(name, permanent=True, direction="top",
+                                           className="ds-zoom-label"),
                     popup=folium.Popup(name, max_width=250),
                     color=color,
                     fill=True,
@@ -433,7 +480,7 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
         # which is what was breaking this map after a run completed.
         st_folium(
             m, use_container_width=True, height=440,
-            key=f"donut_map_results_{p.get('map_nonce', 0)}",
+            key=f"donut_map_results_{p.get('map_nonce', 0)}_{zone_filter}",
             returned_objects=["last_object_clicked", "zoom"],
         )
         return None
@@ -604,11 +651,19 @@ with st.sidebar:
 if p["running"]:
     st.info("Map is locked while the scraper is running.")
 else:
+    _zone = "All"
     if p.get("clinics"):
-        st.markdown("**Clinics found in your area** — hover or click a pin to see the name")
+        st.markdown("**Clinics found in your area** — click a pin for the name; zoom in to auto-show labels")
+        _zone = st.segmented_control(
+            "Map filter",
+            options=["All", "Core only", "Buffer only"],
+            default="All",
+            key="ds_map_zone",
+            label_visibility="collapsed",
+        ) or "All"
     else:
         st.markdown("**Draw your target area** — polygon only, one shape at a time")
-    new_polygon_coords = _render_draw_map(buffer_miles)
+    new_polygon_coords = _render_draw_map(buffer_miles, _zone)
 
     # One compact row under the map: search box + a contextual right slot
     # (Clear shape once a polygon exists, otherwise the resolved-location status).
