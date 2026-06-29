@@ -20,6 +20,7 @@ Algorithm (validated against 23 real ambiguous address groups via web search):
 from __future__ import annotations
 
 import logging
+import math
 import re
 from collections import defaultdict
 
@@ -203,78 +204,79 @@ def _suite_token(addr: str) -> str:
 # ── Core deduplication ───────────────────────────────────────────────────────
 
 
-def deduplicate_clinics(clinics: list[dict]) -> list[dict]:
-    """Merge same-address listings and pre-fill head_dentist.
+# Two listings closer than this (metres) are treated as the same building even
+# when their address text differs (geocoder rounding, building-name prefixes,
+# "St Hwy" vs "State Hwy"). Tuned against real medical complexes: large dental
+# buildings span ~45m, so this catches address-text variants of one office
+# without chaining neighbouring buildings.
+GEO_SAME_BUILDING_M = 40.0
 
-    Returns a new list of clinic dicts; originals are not mutated.
+
+def _to_float(v) -> float | None:
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6371000.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = math.radians(lat2 - lat1)
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def _entry(clinic: dict) -> dict:
+    """Classify one listing and precompute the keys dedup matches on."""
+    name = clinic.get("name", "")
+    is_person = _looks_like_person(name)
+    doctor_name = _extract_doctor_from_name(name) if is_person else None
+
+    # Also try extracting a doctor name from business names that contain doctor
+    # references (e.g. "Dr. Rebecca Bork Family Dentistry").
+    biz_doctor = None
+    if not is_person and (_DR_PREFIX_RE.match(name) or _CREDENTIAL_RE.search(name)):
+        biz_doctor = _extract_doctor_from_name(name)
+
+    addr = clinic.get("address", "")
+    return {
+        "clinic": dict(clinic),  # shallow copy
+        "is_person": is_person,
+        "doctor_name": doctor_name,
+        "biz_doctor": biz_doctor,
+        "phone": (clinic.get("phone") or "").strip(),
+        "phone10": _digits(clinic.get("phone", ""))[:10],
+        "suite": _suite_token(addr),
+        "domain": _domain(clinic.get("website", "")),
+        "bk": _building_key(addr) if addr else "",
+        "lat": _to_float(clinic.get("lat")),
+        "lng": _to_float(clinic.get("lng")),
+    }
+
+
+def deduplicate_clinics(clinics: list[dict]) -> list[dict]:
+    """Merge listings that are the same physical practice and pre-fill head_dentist.
+
+    A global union-find links any two listings whose identity matches. Proximity
+    alone never merges (a medical building holds many distinct practices); an
+    identity signal — phone, website domain, or suite — must also agree:
+
+      * same phone AND domain                      → same practice, any address
+      * same building (geo ≤40m or text) AND phone → same practice
+      * same building (geo ≤40m or text) AND domain
+      * same text building AND suite               → same office (one unit)
+
+    Suiteless bare-name doctors are then folded into their building's practice.
+    Returns a new list; originals are not mutated.
     """
     if not clinics:
         return clinics
 
-    # Group by building (street + city), not by full address — so suite/ZIP/
-    # directional variants of the same place land together.
-    addr_groups: dict[str, list[dict]] = defaultdict(list)
-    no_address: list[dict] = []
-    for clinic in clinics:
-        addr = clinic.get("address", "")
-        if not addr:
-            no_address.append(clinic)
-            continue
-        addr_groups[_building_key(addr)].append(clinic)
+    n = len(clinics)
+    meta = [_entry(c) for c in clinics]
 
-    result: list[dict] = list(no_address)
-
-    for group in addr_groups.values():
-        if len(group) == 1:
-            result.extend(group)
-            continue
-
-        merged = _merge_address_group(group)
-        result.extend(merged)
-
-    logger.info(
-        "Dedup: %d clinics → %d after merging same-building listings",
-        len(clinics),
-        len(result),
-    )
-    return result
-
-
-def _merge_address_group(group: list[dict]) -> list[dict]:
-    """Merge listings that share a building.
-
-    Listings in the same building are clustered together when they share a phone
-    number, a suite, or a website domain — any of those means the same physical
-    practice. Distinct practices in the same building (different phone, suite and
-    domain) stay separate.
-    """
-
-    # Classify each entry
-    entries: list[dict] = []
-    for clinic in group:
-        name = clinic.get("name", "")
-        is_person = _looks_like_person(name)
-        doctor_name = _extract_doctor_from_name(name) if is_person else None
-
-        # Also try extracting a doctor name from business names that contain
-        # doctor references (e.g. "Dr. Rebecca Bork Family Dentistry")
-        biz_doctor = None
-        if not is_person and (_DR_PREFIX_RE.match(name) or _CREDENTIAL_RE.search(name)):
-            biz_doctor = _extract_doctor_from_name(name)
-
-        entries.append({
-            "clinic": dict(clinic),  # shallow copy
-            "is_person": is_person,
-            "doctor_name": doctor_name,
-            "biz_doctor": biz_doctor,
-            "phone": (clinic.get("phone") or "").strip(),
-            "phone10": _digits(clinic.get("phone", ""))[:10],
-            "suite": _suite_token(clinic.get("address", "")),
-            "domain": _domain(clinic.get("website", "")),
-        })
-
-    # Union-find: link entries that share a phone, suite, or website domain.
-    n = len(entries)
     parent = list(range(n))
 
     def _find(x: int) -> int:
@@ -289,61 +291,88 @@ def _merge_address_group(group: list[dict]) -> list[dict]:
             parent[ra] = rb
 
     for i in range(n):
+        mi = meta[i]
         for j in range(i + 1, n):
-            ei, ej = entries[i], entries[j]
+            mj = meta[j]
+            same_ph = bool(mi["phone10"]) and mi["phone10"] == mj["phone10"]
+            same_dom = bool(mi["domain"]) and mi["domain"] == mj["domain"]
+            same_ste = bool(mi["suite"]) and mi["suite"] == mj["suite"]
+            same_text_bldg = bool(mi["bk"]) and mi["bk"] == mj["bk"]
+            geo_close = (
+                mi["lat"] is not None and mj["lat"] is not None
+                and _haversine_m(mi["lat"], mi["lng"], mj["lat"], mj["lng"])
+                <= GEO_SAME_BUILDING_M
+            )
+            same_bldg = same_text_bldg or geo_close
             if (
-                (ei["phone10"] and ei["phone10"] == ej["phone10"])
-                or (ei["suite"] and ei["suite"] == ej["suite"])
-                or (ei["domain"] and ei["domain"] == ej["domain"])
+                (same_ph and same_dom)
+                or (same_bldg and same_ph)
+                or (same_bldg and same_dom)
+                or (same_text_bldg and same_ste)
             ):
                 _union(i, j)
 
-    clusters: dict[int, list[dict]] = defaultdict(list)
+    components: dict[int, list[dict]] = defaultdict(list)
     for i in range(n):
-        clusters[_find(i)].append(entries[i])
+        components[_find(i)].append(meta[i])
 
-    merged_clusters: list[dict] = [
-        _merge_phone_cluster(cluster) for cluster in clusters.values()
-    ]
+    merged = [_merge_phone_cluster(comp) for comp in components.values()]
+    result = _fold_persons_by_building(merged)
 
-    # Cross-cluster merge: count distinct businesses across all clusters
-    business_clusters = []
-    person_only_clusters = []
-    for mc in merged_clusters:
-        name = mc.get("name", "")
-        if _looks_like_person(name):
-            person_only_clusters.append(mc)
+    logger.info(
+        "Dedup: %d clinics → %d after merging duplicate listings",
+        len(clinics),
+        len(result),
+    )
+    return result
+
+
+def _fold_persons_by_building(records: list[dict]) -> list[dict]:
+    """Group merged records by building and fold standalone doctor names into the
+    building's practice (a doctor listed at the same address as the one business
+    there is that practice's dentist, not a separate clinic)."""
+    groups: dict[str, list[dict]] = defaultdict(list)
+    out: list[dict] = []
+    for r in records:
+        addr = r.get("address", "")
+        bk = _building_key(addr) if addr else ""
+        if bk:
+            groups[bk].append(r)
         else:
-            business_clusters.append(mc)
+            out.append(r)
+    for group in groups.values():
+        out.extend(_fold_persons_in_building(group))
+    return out
 
-    if not person_only_clusters:
-        return business_clusters or merged_clusters
 
-    if not business_clusters:
-        return person_only_clusters
+def _fold_persons_in_building(records: list[dict]) -> list[dict]:
+    if len(records) == 1:
+        return records
 
-    # Fold person-only clusters into the best-matching business — but only when
-    # the person carries no suite of their own. Within a single building, a
-    # person listed at a specific suite that differs from every business (it
-    # would have unioned otherwise) is a separate office, not a doctor at one of
-    # them (e.g. a dentist at #101 next to a snore clinic at #107). A suiteless
-    # person is the building's practice and folds in safely.
-    remaining_persons: list[dict] = []
-    for pc in person_only_clusters:
+    business = [r for r in records if not _looks_like_person(r.get("name", ""))]
+    persons = [r for r in records if _looks_like_person(r.get("name", ""))]
+    if not persons or not business:
+        return records
+
+    # Fold a person into the best-matching business — but only when the person
+    # carries no suite of their own (a person at a specific differing suite is a
+    # separate office, e.g. a dentist at #101 next to a snore clinic at #107) and
+    # either has no contact details of their own or those details match the
+    # business (a bare doctor name is that practice's dentist; one with their own
+    # unmatched phone/site is a separate practice sharing the building).
+    remaining: list[dict] = []
+    for pc in persons:
         if _suite_token(pc.get("address", "")):
-            remaining_persons.append(pc)
+            remaining.append(pc)
             continue
-        target = _best_business_match(pc, business_clusters)
-        # A suiteless person with their own phone/website that matches no
-        # business here is a separate practice sharing the building — keep them.
-        # A bare name (no contact details) is folded into the building's practice.
+        target = _best_business_match(pc, business)
         p_phone = _digits(pc.get("phone", ""))[:10]
         p_domain = _domain(pc.get("website", ""))
         t_phone = _digits(target.get("phone", ""))[:10]
         t_domain = _domain(target.get("website", ""))
         matched = (p_phone and p_phone == t_phone) or (p_domain and p_domain == t_domain)
         if (p_phone or p_domain) and not matched:
-            remaining_persons.append(pc)
+            remaining.append(pc)
             continue
         doc = _extract_doctor_from_name(pc.get("name", ""))
         doctors = []
@@ -355,7 +384,7 @@ def _merge_address_group(group: list[dict]) -> list[dict]:
         _add_doctors_to_clinic(target, doctors)
         _merge_missing_fields(target, pc)
 
-    return business_clusters + remaining_persons
+    return business + remaining
 
 
 def _best_business_match(person_clinic: dict, businesses: list[dict]) -> dict:
