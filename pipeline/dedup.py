@@ -211,6 +211,12 @@ def _suite_token(addr: str) -> str:
 # without chaining neighbouring buildings.
 GEO_SAME_BUILDING_M = 40.0
 
+# A shared local phone line means the same practice even across different
+# addresses (Google sometimes lists a practice at a stale/secondary address with
+# the same number). Toll-free numbers are excluded — call centers and booking
+# services share them across unrelated practices.
+_TOLL_FREE_AREA = {"800", "888", "877", "866", "855", "844", "833", "822"}
+
 
 def _to_float(v) -> float | None:
     try:
@@ -263,9 +269,8 @@ def deduplicate_clinics(clinics: list[dict]) -> list[dict]:
     alone never merges (a medical building holds many distinct practices); an
     identity signal — phone, website domain, or suite — must also agree:
 
-      * same phone AND domain                      → same practice, any address
-      * same building (geo ≤40m or text) AND phone → same practice
-      * same building (geo ≤40m or text) AND domain
+      * same local phone line                      → same practice, any address
+      * same building (geo ≤40m or text) AND domain → same practice
       * same text building AND suite               → same office (one unit)
 
     Suiteless bare-name doctors are then folded into their building's practice.
@@ -294,7 +299,9 @@ def deduplicate_clinics(clinics: list[dict]) -> list[dict]:
         mi = meta[i]
         for j in range(i + 1, n):
             mj = meta[j]
-            same_ph = bool(mi["phone10"]) and mi["phone10"] == mj["phone10"]
+            ph = mi["phone10"]
+            same_ph = bool(ph) and ph == mj["phone10"]
+            local_ph = same_ph and ph[:3] not in _TOLL_FREE_AREA
             same_dom = bool(mi["domain"]) and mi["domain"] == mj["domain"]
             same_ste = bool(mi["suite"]) and mi["suite"] == mj["suite"]
             same_text_bldg = bool(mi["bk"]) and mi["bk"] == mj["bk"]
@@ -305,8 +312,7 @@ def deduplicate_clinics(clinics: list[dict]) -> list[dict]:
             )
             same_bldg = same_text_bldg or geo_close
             if (
-                (same_ph and same_dom)
-                or (same_bldg and same_ph)
+                local_ph
                 or (same_bldg and same_dom)
                 or (same_text_bldg and same_ste)
             ):
