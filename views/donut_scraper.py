@@ -186,6 +186,55 @@ def _run_pipeline(
         p["running"] = False
 
 
+AREA_CAP_SQMI = 50.0
+
+
+def _launch_donut_run(
+    p: dict,
+    polygon_coords: list[list[float]],
+    buffer_miles: float,
+    area_name: str,
+    api_key: str,
+    gemini_key: str,
+) -> None:
+    p.update({
+        "running": True, "error": None, "clinics": None,
+        "sheet_result": None, "buffer_miles": buffer_miles,
+        "area_name": area_name, "progress": 0, "message": "",
+        "messages": [],
+    })
+    threading.Thread(
+        target=_run_pipeline,
+        args=(p, polygon_coords, buffer_miles, area_name, api_key, gemini_key),
+        daemon=True,
+    ).start()
+
+
+@st.dialog("Large search area")
+def confirm_large_area_dialog(
+    p: dict,
+    polygon_coords: list[list[float]],
+    buffer_miles: float,
+    area_name: str,
+    api_key: str,
+    gemini_key: str,
+    area_sqmi: float,
+) -> None:
+    st.write(
+        f"This area is **{area_sqmi:.0f} sq mi**, over the **{AREA_CAP_SQMI:.0f} sq mi** limit. "
+        "Larger areas cost more and take longer to scrape."
+    )
+    st.write("Proceed anyway, or cancel and draw a smaller area?")
+    col_cancel, col_proceed = st.columns(2)
+    with col_cancel:
+        if st.button("Cancel", use_container_width=True):
+            st.rerun()
+    with col_proceed:
+        if st.button("Proceed anyway", use_container_width=True, type="primary"):
+            _launch_donut_run(p, polygon_coords, buffer_miles, area_name, api_key, gemini_key)
+            st.rerun()
+
+
 def _build_results_df(clinics: list[dict]) -> pd.DataFrame:
     from utils.donut_sheets import _DAYS
 
@@ -724,6 +773,8 @@ if polygon_coords and not p["running"]:
     est_cost = n_queries * GOOGLE_SEARCH_COST
     over_limit = n_queries > CIRCLE_WARNING_THRESHOLD
     q_color = "#b91c1c" if over_limit else "#183e34"
+    area_over = area > AREA_CAP_SQMI
+    area_color = "#b91c1c" if area_over else "#183e34"
 
     def _stat(label: str, value: str, color: str = "#183e34") -> str:
         return (
@@ -746,10 +797,14 @@ if polygon_coords and not p["running"]:
     if over_limit:
         queries_display += _tag.format("(over 200 limit)")
 
+    area_display = f"{area:.1f} sq mi"
+    if area_over:
+        area_display += _tag.format(f"(over {AREA_CAP_SQMI:.0f} limit)")
+
     st.markdown(
         "<div style='background:#f7f7f8; border:1px solid #ededed; border-radius:8px; padding:16px; "
         "margin-top:16px; display:flex; gap:16px; flex-wrap:wrap;'>"
-        + _stat("Encompassed Area", f"{area:.1f} sq mi")
+        + _stat("Encompassed Area", area_display, area_color)
         + _stat("Primary Location", city)
         + _stat("Buffer", buffer_display)
         + _stat("Grid Queries", queries_display, q_color)
@@ -774,19 +829,13 @@ if run_clicked:
         st.error("GOOGLE_PLACES_API_KEY not configured.")
     elif p["running"]:
         st.warning("A run is already in progress.")
-    else:
-        p.update({
-            "running": True, "error": None, "clinics": None,
-            "sheet_result": None, "buffer_miles": buffer_miles,
-            "area_name": area_name, "progress": 0, "message": "",
-            "messages": [],
-        })
-        t = threading.Thread(
-            target=_run_pipeline,
-            args=(p, polygon_coords, buffer_miles, area_name, api_key, gemini_key),
-            daemon=True,
+    elif p.get("area_sqmi", 0.0) > AREA_CAP_SQMI:
+        confirm_large_area_dialog(
+            p, polygon_coords, buffer_miles, area_name, api_key, gemini_key,
+            p.get("area_sqmi", 0.0),
         )
-        t.start()
+    else:
+        _launch_donut_run(p, polygon_coords, buffer_miles, area_name, api_key, gemini_key)
         st.rerun()
 
 # Progress display
